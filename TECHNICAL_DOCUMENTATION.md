@@ -59,7 +59,7 @@ sequenceDiagram
         Src->>Val: validate (range, overround, minimum quality)
         Val-->>Ref: cleaned odds or rejection
         Ref->>Ref: filter odds_comparison/market_odds
-        Ref->>Repo: save (only good data; failures keep the old)
+        Ref->>Repo: save (good data only, a failure keeps the old odds)
         Ref->>Ref: action odds_comparison/odds_updated
     end
     Sch->>Ref: reportDiagnostics(source)
