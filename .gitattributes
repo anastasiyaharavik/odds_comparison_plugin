@@ -1,0 +1,6 @@
+# Shell scripts run under bash, which fails on a carriage return: keep LF everywhere.
+*.sh text eol=lf
+
+# Recorded source responses must stay byte-for-byte identical to their capture:
+# fixtures/*/manifest.json pins each file's sha256, so no line-ending conversion.
+/fixtures/** -text

@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<ruleset name="OddsComparison">
+    <description>PSR-12 plus WordPress security sniffs .</description>
+
+    <file>.</file>
+
+    <exclude-pattern>/vendor/*</exclude-pattern>
+    <exclude-pattern>/node_modules/*</exclude-pattern>
+    <exclude-pattern>/build/*</exclude-pattern>
+    <exclude-pattern>/fixtures/*</exclude-pattern>
+    <!-- Local tools that are not part of the repository. -->
+    <exclude-pattern>/bin/*</exclude-pattern>
+
+    <arg name="extensions" value="php"/>
+    <arg name="colors"/>
+    <arg name="parallel" value="8"/>
+    <arg value="sp"/>
+
+    <config name="minimum_wp_version" value="6.5"/>
+
+    <!-- Base standard. -->
+    <rule ref="PSR12">
+        <!--
+            Every PHP file starts with the WordPress `defined('ABSPATH') || exit;` guard.
+            PSR-1 counts that as a side effect next to a class declaration; this is a deliberate,
+            documented exception.
+        -->
+        <exclude name="PSR1.Files.SideEffects.FoundWithSymbols"/>
+    </rule>
+
+    <!-- WordPress security & safety sniffs. -->
+    <rule ref="WordPress.Security"/>
+    <rule ref="WordPress.DB.PreparedSQL"/>
+    <rule ref="WordPress.DB.PreparedSQLPlaceholders"/>
+    <rule ref="WordPress.WP.AlternativeFunctions"/>
+    <rule ref="WordPress.PHP.DontExtract"/>
+    <rule ref="WordPress.PHP.RestrictedPHPFunctions"/>
+    <rule ref="Squiz.PHP.Eval"/>
+
+    <!-- i18n: correct text domain and translator comments for placeholders. -->
+    <rule ref="WordPress.WP.I18n">
+        <properties>
+            <property name="text_domain" type="array">
+                <element value="odds-comparison"/>
+            </property>
+        </properties>
+    </rule>
+    <rule ref="Generic.PHP.NoSilencedErrors"/>
+
+    <!-- Tests run outside WordPress. -->
+    <rule ref="WordPress.Security">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+    <rule ref="WordPress.WP.AlternativeFunctions">
+        <exclude-pattern>/tests/*</exclude-pattern>
+    </rule>
+
+    <!--
+        src/Domain and src/Odds are pure PHP (no WordPress functions), so they can be unit-tested and reused.
+        Their exception messages are developer diagnostics, never echoed raw: anything that shows
+        them (admin status log, notices) escapes at output time. wp_parse_url() is
+        only a wrapper for parse_url() and is not available there.
+    -->
+    <rule ref="WordPress.Security.EscapeOutput.ExceptionNotEscaped">
+        <exclude-pattern>/src/Domain/*</exclude-pattern>
+        <exclude-pattern>/src/Odds/*</exclude-pattern>
+    </rule>
+    <rule ref="WordPress.WP.AlternativeFunctions.parse_url_parse_url">
+        <exclude-pattern>/src/Domain/*</exclude-pattern>
+    </rule>
+
+    <!--
+        templates/ holds theme-overridable HTML. Its lines are markup with escaped attributes;
+        splitting them hurts readability more than long lines do. Escaping sniffs still apply.
+    -->
+    <rule ref="Generic.Files.LineLength">
+        <exclude-pattern>/templates/*</exclude-pattern>
+    </rule>
+</ruleset>

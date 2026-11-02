@@ -1,0 +1,80 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "odds-comparison/odds-table",
+  "version": "0.1.0",
+  "title": "Odds Comparison",
+  "category": "widgets",
+  "icon": "chart-bar",
+  "description": "Compare live odds from multiple bookmakers for an event and market.",
+  "keywords": [
+    "odds",
+    "betting",
+    "compare"
+  ],
+  "textdomain": "odds-comparison",
+  "attributes": {
+    "eventId": {
+      "type": "string",
+      "default": ""
+    },
+    "marketKey": {
+      "type": "string",
+      "default": "match-result"
+    },
+    "bookmakers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "selections": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "oddsFormat": {
+      "type": "string",
+      "enum": [
+        "inherit",
+        "fractional",
+        "decimal",
+        "american"
+      ],
+      "default": "inherit"
+    },
+    "highlightBest": {
+      "type": "boolean",
+      "default": true
+    },
+    "showFormatSwitcher": {
+      "type": "boolean",
+      "default": true
+    },
+    "caption": {
+      "type": "string",
+      "default": ""
+    }
+  },
+  "supports": {
+    "html": false,
+    "align": [
+      "wide",
+      "full"
+    ],
+    "spacing": {
+      "margin": true
+    }
+  },
+  "example": {
+    "attributes": {}
+  },
+  "editorScript": "file:./index.js",
+  "editorStyle": "file:./index.css",
+  "style": "file:./style-index.css",
+  "viewScript": "file:./view.js",
+  "render": "file:./render.php"
+}

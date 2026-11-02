@@ -1,0 +1,28 @@
+{
+  "name": "odds-comparison",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Block editor assets for the Odds Comparison WordPress plugin.",
+  "license": "GPL-2.0-or-later",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "wp-scripts build --webpack-src-dir=blocks --output-path=build --webpack-copy-php",
+    "start": "wp-scripts start --webpack-src-dir=blocks --output-path=build --webpack-copy-php",
+    "lint": "npm run lint:js && npm run lint:css",
+    "lint:js": "wp-scripts lint-js blocks assets tests/e2e",
+    "lint:css": "wp-scripts lint-style \"blocks/**/*.scss\" \"assets/**/*.css\" --allow-empty-input",
+    "format": "wp-scripts format blocks",
+    "test:e2e": "playwright test -c tests/e2e/playwright.config.js",
+    "docs:screenshots": "OC_DOCS_SCREENSHOTS=1 playwright test -c tests/e2e/playwright.config.js docs-screenshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@wordpress/e2e-test-utils-playwright": "^3.1.0",
+    "@wordpress/scripts": "^30.0.0"
+  },
+  "overrides": {
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,519 @@
+/**
+ * Odds table styles (frontend and editor preview): the "Matchday card".
+ * Loaded only where the block is used.
+ *
+ * Theme typography is inherited; colours are custom properties so
+ * themes can restyle without overrides. Every text and
+ * background pair has a contrast of at least 4.5:1. The phone layout
+ * follows the block's own width (container query), not the viewport.
+ */
+.oc-odds {
+	--oc-accent: #b0174e;
+	--oc-accent-text: #fff;
+	--oc-card-bg: #fff;
+	--oc-text: #221a1e;
+	--oc-border: #e6e2e4;
+	--oc-rule: #f3eff1;
+	--oc-chip-border: #e1d7dc;
+	--oc-muted: #676066;
+	--oc-stale: #8a2424;
+
+	container-type: inline-size;
+	margin-block: 1.5em;
+	font-size: 0.95em;
+}
+
+.oc-sr-only {
+	position: absolute !important;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.oc-odds__card {
+	overflow: hidden;
+	border: 1px solid var(--oc-border);
+	border-radius: 14px;
+	background: var(--oc-card-bg);
+	color: var(--oc-text);
+}
+
+// Fixture header: home, kick-off chip, away.
+.oc-odds__head {
+	padding: 1.1em 1.25em 0.9em;
+	text-align: center;
+}
+
+.oc-odds__match {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	gap: 0.6em;
+	align-items: center;
+}
+
+.oc-odds__team,
+.oc-odds__title {
+	margin: 0;
+	font-size: 1.2em;
+	font-weight: 700;
+	line-height: 1.15;
+	overflow-wrap: break-word;
+	hyphens: auto;
+
+	small {
+		display: block;
+		margin-top: 0.2em;
+		color: var(--oc-muted);
+		font-size: 0.58em;
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+}
+
+.oc-odds__kickoff {
+	display: grid;
+	gap: 0.15em;
+	justify-items: center;
+}
+
+.oc-odds__vs {
+	color: var(--oc-muted);
+	font-size: 0.72em;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.oc-odds__time {
+	padding: 0.1em 0.7em;
+	border: 1.5px solid var(--oc-accent);
+	border-radius: 999px;
+	color: var(--oc-accent);
+	font-size: 0.8em;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+// Market line and the visitor's format switcher.
+.oc-odds__bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4em 0.75em;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.5em 1.25em;
+	border-block: 1px solid var(--oc-border);
+	color: var(--oc-muted);
+	font-size: 0.82em;
+}
+
+.oc-odds__switcher {
+	display: flex;
+	gap: 0.4em;
+	align-items: center;
+
+	&[hidden] {
+		display: none;
+	}
+
+	select {
+		padding: 0.15em 0.4em;
+		border: 1px solid #cfc7cc;
+		border-radius: 6px;
+		background: var(--oc-card-bg);
+		color: var(--oc-text);
+		font: inherit;
+	}
+}
+
+.oc-odds__scroll {
+	overflow-x: auto;
+
+	&:focus-visible {
+		outline: 2px solid var(--oc-accent);
+		outline-offset: -2px;
+	}
+}
+
+.oc-odds__table {
+	width: 100%;
+	margin: 0;
+	border: 0;
+	border-collapse: collapse;
+
+	// The header names event and market; the caption is for screen readers.
+	caption {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+	}
+
+	th,
+	td {
+		padding: 0.35em 0.4em;
+		border: 0;
+		text-align: center;
+	}
+
+	thead th {
+		padding-top: 0.7em;
+		color: var(--oc-muted);
+		font-size: 0.72em;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	th:first-child {
+		padding-left: 1.25em;
+		text-align: left;
+	}
+
+	td:last-child {
+		padding-right: 1em;
+	}
+
+	th[scope="row"] {
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	tbody tr + tr > * {
+		border-top: 1px solid var(--oc-rule);
+	}
+}
+
+.oc-odds__logo {
+	margin-right: 0.4em;
+	vertical-align: middle;
+}
+
+.oc-odds__cell.is-na {
+	color: #8d8389;
+}
+
+// Bookmaker name: the link to the bookmaker (affiliate link or website).
+.oc-odds__bookmaker {
+	color: inherit;
+	text-decoration: underline;
+	text-decoration-color: var(--oc-muted);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+
+	&:hover {
+		color: var(--oc-accent);
+		text-decoration-color: currentcolor;
+	}
+
+	&:focus-visible {
+		border-radius: 2px;
+		outline: 2px solid var(--oc-accent);
+		outline-offset: 2px;
+	}
+}
+
+// Price chip: plain text (the bookmaker's name carries the link).
+// Best: filled, with a star.
+.oc-odds__price {
+	display: inline-flex;
+	gap: 0.3em;
+	align-items: center;
+	justify-content: center;
+	min-width: 4.6em;
+	padding: 0.3em 0.65em;
+	border: 1px solid var(--oc-chip-border);
+	border-radius: 8px;
+	background: var(--oc-card-bg);
+	color: var(--oc-text);
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+	text-decoration: none;
+	box-sizing: border-box;
+
+	&:focus-visible {
+		outline: 2px solid var(--oc-accent);
+		outline-offset: 2px;
+	}
+
+	&:is(a):hover {
+		border-color: var(--oc-accent);
+	}
+
+	&.is-best {
+		border-color: var(--oc-accent);
+		background: var(--oc-accent);
+		color: var(--oc-accent-text);
+	}
+}
+
+.oc-odds__star {
+	font-size: 0.75em;
+}
+
+// Phone-only parts: best price per selection and the "Compare all" button.
+.oc-odds__offers,
+.oc-odds__more {
+	display: none;
+}
+
+.oc-odds__footer {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3em 1em;
+	justify-content: space-between;
+	padding: 0.8em 1.25em 0.9em;
+	color: var(--oc-muted);
+	font-size: 0.78em;
+}
+
+.oc-odds__legend span {
+	color: var(--oc-accent);
+}
+
+.oc-odds__meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.2em 0.75em;
+}
+
+.oc-odds__stale {
+	color: var(--oc-stale);
+	font-weight: 600;
+}
+
+.oc-odds__badge {
+	padding: 0 0.4em;
+	border: 1px solid currentcolor;
+	border-radius: 2px;
+}
+
+.oc-odds__message {
+	color: var(--oc-muted);
+}
+
+@container (max-width: 520px) {
+
+	.oc-odds__head {
+		padding: 0.8em 0.75em 0.65em;
+	}
+
+	.oc-odds__team,
+	.oc-odds__title {
+		font-size: 1em;
+
+		small {
+			display: none;
+		}
+	}
+
+	// Kick-off time on its own line, so long team names keep the width.
+	.oc-odds__match {
+		row-gap: 0.4em;
+	}
+
+	.oc-odds__kickoff {
+		display: contents;
+	}
+
+	.oc-odds__vs {
+		grid-row: 1;
+		grid-column: 2;
+	}
+
+	.oc-odds__time {
+		grid-row: 2;
+		grid-column: 1 / -1;
+		justify-self: center;
+		padding: 0.05em 0.55em;
+		font-size: 0.75em;
+	}
+
+	.oc-odds__bar {
+		padding: 0.45em 0.75em;
+	}
+
+	// Best odds: a tile per selection (match) or a line per selection (outright).
+	.oc-odds__offers {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.75em;
+		margin: 0;
+		padding: 0.75em 0.75em 0.25em;
+		list-style: none;
+	}
+
+	.oc-odds__offer {
+		display: grid;
+		gap: 0.2em;
+		min-width: 0;
+		margin: 0;
+		text-align: center;
+
+		.oc-odds__price {
+			width: 100%;
+			min-width: 0;
+			padding: 0.45em 0.3em;
+			font-size: 1.05em;
+		}
+	}
+
+	.oc-odds__offer-label,
+	.oc-odds__offer-at {
+		overflow: hidden;
+		color: var(--oc-muted);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.oc-odds__offer-label {
+		font-size: 0.7em;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+
+	.oc-odds__offer-at {
+		font-size: 0.75em;
+
+		b,
+		.oc-odds__bookmaker {
+			color: var(--oc-text);
+			font-weight: 600;
+		}
+	}
+
+	.oc-odds__offers--selection-rows {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.4em;
+
+		.oc-odds__offer {
+			grid-template-columns: minmax(0, 1fr) 5.5em;
+			grid-template-areas: "label chip" "at chip";
+			gap: 0 0.75em;
+			align-items: center;
+			text-align: left;
+		}
+
+		.oc-odds__offer-label {
+			grid-area: label;
+			color: var(--oc-text);
+			font-size: 0.9em;
+			letter-spacing: 0;
+			text-transform: none;
+		}
+
+		.oc-odds__offer-at {
+			grid-area: at;
+		}
+
+		.oc-odds__price {
+			grid-area: chip;
+			font-size: 0.95em;
+		}
+	}
+
+	// Shown by view.js; without JavaScript the full table stays visible.
+	.oc-odds__more:not([hidden]) {
+		display: flex;
+		gap: 0.4em;
+		align-items: center;
+		justify-content: center;
+		width: calc(100% - 1.5em);
+		margin: 0.65em 0.75em 0.15em;
+		padding: 0.55em 0.75em;
+		border: 1px solid var(--oc-border);
+		border-radius: 8px;
+		background: var(--oc-card-bg);
+		color: var(--oc-accent);
+		font: inherit;
+		font-size: 0.88em;
+		font-weight: 600;
+		cursor: pointer;
+
+		&::after {
+			content: "\25BE";
+			transition: transform 0.15s;
+		}
+
+		&[aria-expanded="true"]::after {
+			transform: rotate(180deg);
+		}
+
+		&:focus-visible {
+			outline: 2px solid var(--oc-accent);
+			outline-offset: 2px;
+		}
+	}
+
+	.oc-odds.is-collapsed .oc-odds__all {
+		display: none;
+	}
+
+	// Match: one line per bookmaker, outcome names once in the header.
+	.oc-odds--bookmaker-rows {
+		table-layout: fixed;
+
+		th,
+		td {
+			padding: 0.4em 0.25em 0.4em 0.35em;
+		}
+
+		thead th {
+			overflow: hidden;
+			font-size: 0.65em;
+			letter-spacing: 0.04em;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		th:first-child {
+			width: 33%;
+			padding-left: 0.75em;
+		}
+
+		td:last-child {
+			padding-right: 0.75em;
+		}
+
+		th[scope="row"] {
+			font-size: 0.88em;
+			line-height: 1.2;
+			white-space: normal;
+			overflow-wrap: anywhere;
+		}
+
+		.oc-odds__price {
+			gap: 0.1em;
+			width: 100%;
+			min-width: 0;
+			padding: 0.3em 0.1em;
+			border-radius: 6px;
+			font-size: 0.88em;
+			letter-spacing: -0.01em;
+		}
+
+		.oc-odds__star {
+			font-size: 0.6em;
+		}
+	}
+
+	.oc-odds__footer {
+		padding: 0.65em 0.75em 0.75em;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+	.oc-odds__more::after {
+		transition: none;
+	}
+}

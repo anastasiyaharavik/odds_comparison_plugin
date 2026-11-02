@@ -1,0 +1,65 @@
+{
+    "source": "bettingodds",
+    "baseUrl": "https://www.bettingodds.com",
+    "capturedAt": "2026-10-30T12:28:06Z",
+    "tool": "bin/capture-fixtures.php (command-line curl)",
+    "note": "Real responses, stored byte-for-byte. Never edit by hand.",
+    "files": {
+        "robots": {
+            "url": "https://www.bettingodds.com/robots.txt",
+            "file": "robots.txt",
+            "status": 200,
+            "bytes": 923,
+            "sha256": "ea94eacf5f24721009f6020182cfdaa199c455b30674792886104030a236fc75"
+        },
+        "premier-league-listing": {
+            "url": "https://www.bettingodds.com/football/premier-league",
+            "file": "premier-league-listing.html",
+            "status": 200,
+            "bytes": 971300,
+            "sha256": "3daf68ef0ef9fa2f3c9bd532278199f8c08a6a987b1705379f95f74d611054d3"
+        },
+        "premier-league-outright-winner": {
+            "url": "https://www.bettingodds.com/football/premier-league/winner",
+            "file": "premier-league-outright-winner.html",
+            "status": 200,
+            "bytes": 916763,
+            "sha256": "761cbe792038f457e637ca331964c533bec1b299f3609f4160c7e1c297cd125d"
+        },
+        "premier-league-top-goalscorer": {
+            "url": "https://www.bettingodds.com/football/premier-league/top-scorer",
+            "file": "premier-league-top-goalscorer.html",
+            "status": 200,
+            "bytes": 2144669,
+            "sha256": "ef708463a6aee7eb4913cc02dbc04f51cff28fafb7c5797c6cdda6ced9832c7f"
+        },
+        "premier-league-relegation": {
+            "url": "https://www.bettingodds.com/football/premier-league/relegation",
+            "file": "premier-league-relegation.html",
+            "status": 200,
+            "bytes": 797448,
+            "sha256": "85971a4f933c91e54d880396f8ff3c40355aca936d0cae5674fd49afe8cc9e20"
+        },
+        "premier-league-top-four-finish": {
+            "url": "https://www.bettingodds.com/football/premier-league/top-four-finish",
+            "file": "premier-league-top-four-finish.html",
+            "status": 200,
+            "bytes": 798483,
+            "sha256": "2dfb3ef5621ef2fcb73802b6aa8f8cab6f9bce49fafdfb4f12bdfaaeccbb5fd8"
+        },
+        "premier-league-stats-no-odds": {
+            "url": "https://www.bettingodds.com/football/premier-league/stats",
+            "file": "premier-league-stats-no-odds.html",
+            "status": 200,
+            "bytes": 349572,
+            "sha256": "bdb9e783eb4f2f65da6fce407b2659e7786d443e184b75d79d7f1738d8768997"
+        },
+        "match": {
+            "url": "https://www.bettingodds.com/football/chelsea-man-utd",
+            "file": "match.html",
+            "status": 200,
+            "bytes": 384233,
+            "sha256": "3ed86cb747113b4983b14e59efb139d7c588d3aa55971757652823e1400baf72"
+        }
+    }
+}

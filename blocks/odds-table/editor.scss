@@ -1,0 +1,44 @@
+/**
+ * Block sidebar styles (editor only).
+ */
+.oc-odds-edit__bookmakers {
+	margin: 0 0 12px;
+	padding: 0;
+	list-style: none;
+
+	li {
+		display: flex;
+		gap: 2px;
+		align-items: center;
+		padding: 2px 0;
+		border-bottom: 1px solid #f0f0f0;
+	}
+}
+
+.oc-odds-edit__name {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.oc-odds-edit__add {
+	display: flex;
+	gap: 8px;
+	align-items: flex-end;
+	margin-bottom: 8px;
+
+	.components-base-control {
+		flex: 1;
+	}
+}
+
+.oc-odds-edit__bulk {
+	display: flex;
+	gap: 16px;
+}
+
+.oc-odds-edit__hint {
+	color: #757575;
+	font-size: 12px;
+}

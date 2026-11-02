@@ -1,0 +1,23 @@
+{
+    "source": "theoddsapi",
+    "baseUrl": "https://api.the-odds-api.com",
+    "capturedAt": "2026-10-30T12:35:53Z",
+    "tool": "bin/capture-fixtures.php (command-line curl)",
+    "note": "Real responses, stored byte-for-byte. Never edit by hand.",
+    "files": {
+        "sports": {
+            "url": "https://api.the-odds-api.com/v4/sports?apiKey=REDACTED",
+            "file": "sports.json",
+            "status": 200,
+            "bytes": 12678,
+            "sha256": "542a8d73e7a6fbdf529a6b516904e6cc89d7402754d7571b8f8bc58b085767f5"
+        },
+        "premier-league-h2h": {
+            "url": "https://api.the-odds-api.com/v4/sports/soccer_epl/odds?regions=uk&markets=h2h&oddsFormat=decimal&apiKey=REDACTED",
+            "file": "premier-league-h2h.json",
+            "status": 200,
+            "bytes": 108138,
+            "sha256": "90ec900b200bd02b987865fbabe40c22695c70d76c62225e58323c1a8951ba70"
+        }
+    }
+}

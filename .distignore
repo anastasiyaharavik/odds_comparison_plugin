@@ -1,0 +1,22 @@
+# Excluded from the release zip (wp dist-archive). vendor/ (no-dev) and build/ ARE shipped.
+/.git
+/.github
+/node_modules
+/blocks
+/tests
+/fixtures
+/docs
+/.phpunit.cache
+/test-results
+/playwright-report
+.distignore
+.editorconfig
+.gitattributes
+.gitignore
+composer.json
+composer.lock
+package.json
+package-lock.json
+phpcs.xml.dist
+phpunit.xml.dist
+*.zip

@@ -1,0 +1,18 @@
+# Dependencies (installed with `composer install` and `npm ci`)
+/vendor/
+/node_modules/
+
+# Local overrides of the shipped *.dist configs
+/phpcs.xml
+/phpunit.xml
+
+# Test and tool output
+/.phpunit.cache/
+/test-results/
+/playwright-report/
+/tests/e2e/.state/
+
+# Release archives, logs, OS files
+*.zip
+*.log
+.DS_Store
