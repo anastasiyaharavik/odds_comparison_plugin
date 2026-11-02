@@ -10,6 +10,8 @@ declare(strict_types=1);
 
 namespace OddsComparison;
 
+defined('ABSPATH') || exit;
+
 use DateTimeImmutable;
 use DateTimeZone;
 use LogicException;
@@ -54,8 +56,6 @@ use OddsComparison\Support\Deadline;
 use OddsComparison\Support\Logger;
 use OddsComparison\Support\RobotsMonitor;
 use OddsComparison\Support\StatusRecorder;
-
-defined('ABSPATH') || exit;
 
 /**
  * Plugin entry point (Singleton) and composition root.
@@ -234,6 +234,7 @@ final class Plugin
             $http
         );
 
+        $modeSwitch      = new DataModeSwitch($this->repository, $this->events, $this->statusRecorder, $this->tracked);
         $statusPage      = new StatusPage(
             $this->settings,
             $this->sources,
@@ -247,7 +248,8 @@ final class Plugin
             $this->logger,
             $this->cronSchedule,
             $this->bookmakers,
-            is_dir($fixturesDir)
+            is_dir($fixturesDir),
+            $modeSwitch
         );
         $this->tableRenderer = new TableRenderer(
             $this->settings,
@@ -289,7 +291,7 @@ final class Plugin
                 $clock
             ),
             new SettingsEvents(),
-            new DataModeSwitch($this->repository, $this->events, $this->statusRecorder),
+            $modeSwitch,
             $this->statusRecorder,
             $this->scheduler,
             $settingsPage,

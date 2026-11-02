@@ -13,7 +13,6 @@
 .editorconfig
 .gitattributes
 .gitignore
-composer.json
 composer.lock
 package.json
 package-lock.json

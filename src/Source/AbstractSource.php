@@ -17,6 +17,7 @@ use InvalidArgumentException;
 use OddsComparison\Contracts\DiagnosticsInterface;
 use OddsComparison\Contracts\HttpClientInterface;
 use OddsComparison\Contracts\SourceInterface;
+use OddsComparison\Domain\Assert;
 use OddsComparison\Domain\Competition;
 use OddsComparison\Domain\Event;
 use OddsComparison\Domain\Market;
@@ -136,7 +137,11 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
     {
         if ($event->sourceId !== $this->id()) {
             throw new InvalidArgumentException(
-                sprintf('Event %s does not belong to source %s.', $event->id, $this->id())
+                sprintf(
+                    'Event %s does not belong to source %s.',
+                    wp_json_encode($event->id, Assert::JSON),
+                    wp_json_encode($this->id(), Assert::JSON)
+                )
             );
         }
 
@@ -147,9 +152,9 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
             throw new RuntimeException(
                 sprintf(
                     '%s does not offer market %s for %s.',
-                    $this->id(),
-                    $market->key,
-                    $event->id
+                    wp_json_encode($this->id(), Assert::JSON),
+                    wp_json_encode($market->key, Assert::JSON),
+                    wp_json_encode($event->id, Assert::JSON)
                 )
             );
         }
@@ -163,9 +168,9 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
             throw new RuntimeException(
                 sprintf(
                     'Odds for %s / %s rejected: %s.',
-                    $event->id,
-                    $market->key,
-                    (string) $result->rejection
+                    wp_json_encode($event->id, Assert::JSON),
+                    wp_json_encode($market->key, Assert::JSON),
+                    wp_json_encode((string) $result->rejection, Assert::JSON)
                 )
             );
         }

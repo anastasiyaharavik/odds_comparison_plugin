@@ -303,6 +303,17 @@ export default function Edit( { attributes, setAttributes } ) {
 					}
 				/>
 				<RequestState request={ events } />
+				{ eventId &&
+					events.data &&
+					! events.loading &&
+					! currentEvent && (
+						<Notice status="warning" isDismissible={ false }>
+							{ __(
+								'The event chosen for this block is no longer available: it was a demo match (live sources list other matches) or it has finished. Visitors see no table. Choose another event.',
+								'odds-comparison'
+							) }
+						</Notice>
+					) }
 				{ currentEvent?.started && (
 					<Notice status="warning" isDismissible={ false }>
 						{ __(

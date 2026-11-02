@@ -46,7 +46,7 @@ final class Field
         $value = self::read($data, $key, $default);
 
         if (!is_string($value)) {
-            throw new InvalidArgumentException(sprintf('Field "%s" must be a string.', $key));
+            throw new InvalidArgumentException(sprintf('Field %s must be a string.', json_encode($key, Assert::JSON)));
         }
 
         return $value;
@@ -66,7 +66,7 @@ final class Field
         $value = self::read($data, $key, $default);
 
         if (!is_array($value)) {
-            throw new InvalidArgumentException(sprintf('Field "%s" must be an array.', $key));
+            throw new InvalidArgumentException(sprintf('Field %s must be an array.', json_encode($key, Assert::JSON)));
         }
 
         return $value;
@@ -85,7 +85,7 @@ final class Field
         $value = self::read($data, $key, null);
 
         if (!is_int($value) && !is_float($value) && !(is_string($value) && is_numeric($value))) {
-            throw new InvalidArgumentException(sprintf('Field "%s" must be numeric.', $key));
+            throw new InvalidArgumentException(sprintf('Field %s must be numeric.', json_encode($key, Assert::JSON)));
         }
 
         return (float) $value;
@@ -108,7 +108,9 @@ final class Field
         }
 
         if (!is_int($value)) {
-            throw new InvalidArgumentException(sprintf('Field "%s" must be an integer.', $key));
+            throw new InvalidArgumentException(
+                sprintf('Field %s must be an integer.', json_encode($key, Assert::JSON))
+            );
         }
 
         return $value;
@@ -130,7 +132,7 @@ final class Field
         }
 
         if ($default === null) {
-            throw new InvalidArgumentException(sprintf('Field "%s" is required.', $key));
+            throw new InvalidArgumentException(sprintf('Field %s is required.', json_encode($key, Assert::JSON)));
         }
 
         return $default;

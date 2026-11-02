@@ -11,6 +11,7 @@ declare(strict_types=1);
 namespace OddsComparison\Settings;
 
 use InvalidArgumentException;
+use OddsComparison\Domain\Assert;
 use OddsComparison\Domain\Bookmaker;
 use OddsComparison\Domain\OddsFormat;
 use OddsComparison\Source\TheOddsApi\TheOddsApiSource;
@@ -76,7 +77,7 @@ final class Settings
     public function get(string $key): mixed
     {
         if (!array_key_exists($key, self::DEFAULTS)) {
-            throw new InvalidArgumentException(sprintf('Unknown setting "%s".', $key));
+            throw new InvalidArgumentException(sprintf('Unknown setting %s.', wp_json_encode($key, Assert::JSON)));
         }
 
         return $this->all()[$key];

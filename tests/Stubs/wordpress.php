@@ -349,9 +349,9 @@ if (!function_exists('determine_locale')) {
 }
 
 if (!function_exists('wp_json_encode')) {
-    function wp_json_encode(mixed $data): string|false
+    function wp_json_encode(mixed $data, int $options = 0, int $depth = 512): string|false
     {
-        return json_encode($data);
+        return json_encode($data, $options, $depth);
     }
 }
 
@@ -424,6 +424,13 @@ if (!function_exists('spawn_cron')) {
 }
 
 $GLOBALS['odds_comparison_test_can'] = true;
+
+if (!function_exists('get_the_ID')) {
+    function get_the_ID(): int|false
+    {
+        return $GLOBALS['odds_comparison_test_post_id'] ?? false;
+    }
+}
 
 if (!function_exists('current_user_can')) {
     function current_user_can(string $capability, mixed ...$args): bool

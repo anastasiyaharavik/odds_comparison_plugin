@@ -25,6 +25,13 @@ defined('ABSPATH') || exit;
  */
 final class Assert
 {
+    /**
+     * json_encode() flags for data quoted inside exception messages: the value is shown in
+     * quotes with control characters escaped (so it cannot forge log lines), stays readable
+     * (no escaped slashes or Unicode), and invalid UTF-8 cannot make the encoding fail.
+     */
+    public const JSON = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE;
+
     /** Lower-case kebab-case identifier, e.g. `bet365`, `888sport`, `match-result`. */
     private const SLUG_PATTERN = '/^[a-z0-9]+(?:-[a-z0-9]+)*$/';
 
@@ -52,7 +59,13 @@ final class Assert
     public static function slug(string $value, string $field): void
     {
         if (preg_match(self::SLUG_PATTERN, $value) !== 1) {
-            throw new InvalidArgumentException(sprintf('%s must be a kebab-case slug, got "%s".', $field, $value));
+            throw new InvalidArgumentException(
+                sprintf(
+                    '%s must be a kebab-case slug, got %s.',
+                    json_encode($field, self::JSON),
+                    json_encode($value, self::JSON)
+                )
+            );
         }
     }
 
@@ -67,7 +80,7 @@ final class Assert
     public static function notBlank(string $value, string $field): void
     {
         if (trim($value) === '') {
-            throw new InvalidArgumentException(sprintf('%s must not be empty.', $field));
+            throw new InvalidArgumentException(sprintf('%s must not be empty.', json_encode($field, self::JSON)));
         }
     }
 
@@ -86,15 +99,20 @@ final class Assert
             return;
         }
 
-        $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
-        $host   = (string) parse_url($value, PHP_URL_HOST);
-
+        // FILTER_VALIDATE_URL requires a host for http(s); the pattern limits the scheme and
+        // rejects an empty host. (parse_url() is avoided: WordPress asks for wp_parse_url(), which
+        // this pure-PHP layer cannot call.)
         if (
             filter_var($value, FILTER_VALIDATE_URL) === false
-            || !in_array($scheme, ['http', 'https'], true)
-            || $host === ''
+            || preg_match('~^https?://[^/?#\s]+~i', $value) !== 1
         ) {
-            throw new InvalidArgumentException(sprintf('%s must be an http(s) URL, got "%s".', $field, $value));
+            throw new InvalidArgumentException(
+                sprintf(
+                    '%s must be an http(s) URL, got %s.',
+                    json_encode($field, self::JSON),
+                    json_encode($value, self::JSON)
+                )
+            );
         }
     }
 
@@ -115,7 +133,13 @@ final class Assert
             && str_starts_with($value, '/') === $leadingSlash;
 
         if (!$valid) {
-            throw new InvalidArgumentException(sprintf('%s must be a safe relative path, got "%s".', $field, $value));
+            throw new InvalidArgumentException(
+                sprintf(
+                    '%s must be a safe relative path, got %s.',
+                    json_encode($field, self::JSON),
+                    json_encode($value, self::JSON)
+                )
+            );
         }
     }
 
@@ -132,7 +156,9 @@ final class Assert
     {
         foreach ($map as $sourceId => $value) {
             if (!is_string($sourceId) || !is_string($value)) {
-                throw new InvalidArgumentException(sprintf('%s must map source ids to strings.', $field));
+                throw new InvalidArgumentException(
+                    sprintf('%s must map source ids to strings.', json_encode($field, self::JSON))
+                );
             }
 
             self::slug($sourceId, $field . ' source id');

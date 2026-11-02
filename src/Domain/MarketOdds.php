@@ -190,11 +190,15 @@ final class MarketOdds
             Assert::slug($key, 'Selection key');
 
             if (!is_array($selection) || !isset($selection['label'], $selection['prices'])) {
-                throw new InvalidArgumentException(sprintf('Selection "%s" needs a label and prices.', $key));
+                throw new InvalidArgumentException(
+                    sprintf('Selection %s needs a label and prices.', json_encode($key, Assert::JSON))
+                );
             }
 
             if (!is_string($selection['label']) || !is_array($selection['prices'])) {
-                throw new InvalidArgumentException(sprintf('Selection "%s" has an invalid label or prices.', $key));
+                throw new InvalidArgumentException(
+                    sprintf('Selection %s has an invalid label or prices.', json_encode($key, Assert::JSON))
+                );
             }
 
             Assert::notBlank($selection['label'], 'Selection label');
@@ -202,7 +206,10 @@ final class MarketOdds
             foreach ($selection['prices'] as $slug => $price) {
                 if (!is_string($slug) || !$price instanceof Price) {
                     throw new InvalidArgumentException(
-                        sprintf('Selection "%s" prices must map bookmaker slugs to Price.', $key)
+                        sprintf(
+                            'Selection %s prices must map bookmaker slugs to Price.',
+                            json_encode($key, Assert::JSON)
+                        )
                     );
                 }
 

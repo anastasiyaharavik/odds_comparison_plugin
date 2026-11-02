@@ -106,23 +106,23 @@ $renderer = new TableRenderer(
 );
 $bookmakers = (new Settings())->enabledBookmakers($plugin->bookmakers()->keys());
 
-$statusHtml = static function () use ($plugin, $breaker): string {
-    $page = new StatusPage(
-        new Settings(),
-        $plugin->sources(),
-        $breaker,
-        $plugin->statusRecorder(),
-        $plugin->tracked(),
-        $plugin->events(),
-        $plugin->repository(),
-        $plugin->scheduler(),
-        new Lock(),
-        $plugin->logger(),
-        new CronSchedule(),
-        $plugin->bookmakers()
-    );
+$statusPage = static fn (): StatusPage => new StatusPage(
+    new Settings(),
+    $plugin->sources(),
+    $breaker,
+    $plugin->statusRecorder(),
+    $plugin->tracked(),
+    $plugin->events(),
+    $plugin->repository(),
+    $plugin->scheduler(),
+    new Lock(),
+    $plugin->logger(),
+    new CronSchedule(),
+    $plugin->bookmakers()
+);
+$statusHtml = static function () use ($statusPage): string {
     ob_start();
-    $page->render();
+    $statusPage()->render();
 
     return (string) ob_get_clean();
 };
@@ -158,6 +158,13 @@ try {
     );
     $before = $stored();
     $check('seeded from recorded pages', $match !== null && !in_array(null, $before, true));
+
+    // One failed request while odds are fresh is not an outage: no "no odds can be fetched" alarm.
+    $plugin->statusRecorder()->onSourceFailed('bettingodds', new WP_Error('drill', 'one page failed'));
+    $check(
+        'one failure after fresh odds: source is degraded, not failing',
+        $statusPage()->health('bettingodds') === StatusPage::DEGRADED
+    );
 
     // Blocks of markets the site has disabled show "unavailable" by design; check the others.
     $shown = array_values(array_filter(

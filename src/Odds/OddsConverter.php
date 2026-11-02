@@ -11,6 +11,7 @@ declare(strict_types=1);
 namespace OddsComparison\Odds;
 
 use InvalidArgumentException;
+use OddsComparison\Domain\Assert;
 use OddsComparison\Domain\OddsFormat;
 use OddsComparison\Domain\Price;
 
@@ -208,7 +209,9 @@ final class OddsConverter
         }
 
         if (preg_match('#^(\d+)\s*/\s*(\d+)$#', $value, $parts) !== 1 || (int) $parts[2] === 0) {
-            throw new InvalidArgumentException(sprintf('Invalid fractional odds "%s".', $value));
+            throw new InvalidArgumentException(
+                sprintf('Invalid fractional odds %s.', json_encode($value, Assert::JSON))
+            );
         }
 
         return (int) $parts[1] / (int) $parts[2] + 1.0;
@@ -226,7 +229,9 @@ final class OddsConverter
         $american = $this->number(is_string($value) ? ltrim(trim($value), '+') : $value);
 
         if ($american > -100.0 && $american < 100.0) {
-            throw new InvalidArgumentException(sprintf('American odds must be ≤ -100 or ≥ +100, got %s.', $american));
+            throw new InvalidArgumentException(
+                sprintf('American odds must be ≤ -100 or ≥ +100, got %s.', json_encode($american, Assert::JSON))
+            );
         }
 
         return $american > 0 ? 1.0 + $american / 100 : 1.0 + 100 / -$american;
@@ -245,7 +250,7 @@ final class OddsConverter
             $value = trim($value);
 
             if (!is_numeric($value)) {
-                throw new InvalidArgumentException(sprintf('Not a number: "%s".', $value));
+                throw new InvalidArgumentException(sprintf('Not a number: %s.', json_encode($value, Assert::JSON)));
             }
         }
 
@@ -272,7 +277,9 @@ final class OddsConverter
         }
 
         if ($decimal <= 1.0) {
-            throw new InvalidArgumentException(sprintf('Decimal odds must be above 1, got %s.', $decimal));
+            throw new InvalidArgumentException(
+                sprintf('Decimal odds must be above 1, got %s.', json_encode($decimal, Assert::JSON))
+            );
         }
 
         return $decimal;

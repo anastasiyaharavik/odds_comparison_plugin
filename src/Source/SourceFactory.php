@@ -12,6 +12,7 @@ namespace OddsComparison\Source;
 
 use InvalidArgumentException;
 use OddsComparison\Contracts\SourceInterface;
+use OddsComparison\Domain\Assert;
 
 defined('ABSPATH') || exit;
 
@@ -74,14 +75,18 @@ final class SourceFactory
         $definitions = $this->definitions();
 
         if (!array_key_exists($id, $definitions)) {
-            throw new InvalidArgumentException(sprintf('Unknown odds source "%s".', $id));
+            throw new InvalidArgumentException(sprintf('Unknown odds source %s.', wp_json_encode($id, Assert::JSON)));
         }
 
         $source = $this->build($definitions[$id]);
 
         if ($source->id() !== $id) {
             throw new InvalidArgumentException(
-                sprintf('Source registered as "%s" reports id "%s".', $id, $source->id())
+                sprintf(
+                    'Source registered as %s reports id %s.',
+                    wp_json_encode($id, Assert::JSON),
+                    wp_json_encode($source->id(), Assert::JSON)
+                )
             );
         }
 

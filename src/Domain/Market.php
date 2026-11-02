@@ -61,7 +61,9 @@ final class Market
         Assert::sourceMap($sourceNames, 'Market sourceNames');
 
         if (!array_key_exists($selectionType, self::SELECTION_COUNTS)) {
-            throw new InvalidArgumentException(sprintf('Unknown market selectionType "%s".', $selectionType));
+            throw new InvalidArgumentException(
+                sprintf('Unknown market selectionType %s.', json_encode($selectionType, Assert::JSON))
+            );
         }
     }
 

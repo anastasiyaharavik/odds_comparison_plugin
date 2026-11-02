@@ -67,7 +67,7 @@ sequenceDiagram
     Sch->>Sch: after_refresh(summary), release lock
 ```
 
-A page view: `render.php` → `TableRenderer::render()` → stored event and odds → view model → template. The editor preview uses the same renderer through the REST block renderer, so editor and site show the same table. Editor hints ("Choose an event…", "Odds are being fetched…") appear only in that preview: `PreviewContext` marks requests to the `/wp/v2/block-renderer/odds-comparison/odds-table` route from users who can edit posts. Any other REST request that renders the block (for example `content.rendered` from `/wp/v2/posts`) gets exactly the visitor output.
+A page view: `render.php` → `TableRenderer::render()` → stored event and odds → view model → template. The editor preview uses the same renderer through the REST block renderer, so editor and site show the same table. Editor hints ("Choose an event…", "Odds are being fetched…", "its event is no longer available") appear only in that preview (the last one also for logged-in users who can edit the post): `PreviewContext` marks requests to the `/wp/v2/block-renderer/odds-comparison/odds-table` route from users who can edit posts. Any other REST request that renders the block (for example `content.rendered` from `/wp/v2/posts`) gets exactly the visitor output.
 
 The editor tracks an (event, market) pair with `POST /odds-comparison/v1/track` only after the event's market list has loaded and contains the market. The endpoint rejects pairs that can never be priced (an outrights event with Match Result, a match with an outright market, an outright market the competition does not list) with HTTP 400, so they are never queued for refreshes.
 
@@ -164,6 +164,7 @@ Deactivation removes every event of the `odds_comparison_refresh` hook, queued m
 | `odds_comparison_odds_keys` | option | no | stored odds transient name → expiry time (for "Clear cached odds"); expired and deleted entries are dropped |
 | `odds_comparison_status` | option | no | per source: last success, last error, robots.txt result (with the disallowed paths that refreshes skip), competition fetch times; last 10 run summaries |
 | `odds_comparison_errors` | option | no | newest 50 log entries: `time`, `level`, `source`, `message`, `count`. A repeat of the newest entry only increments `count` and updates `time` (the Status tab shows "(×9)"), so repeats cannot push real errors out |
+| `odds_comparison_demo_events` | option | no | ids of the events published blocks showed when the site switched from Demo to Live (deleted on the switch back to Demo); see below |
 | `odds_comparison_lock` | option | no | `{start time}:{random token}` of the running refresh, written with atomic SQL so only one run holds it |
 | `odds_comparison_cb_*`, `odds_comparison_rl_*`, `odds_comparison_theoddsapi_quota` | transients | no | circuit state per host, last request time per host, API credits |
 
@@ -193,8 +194,20 @@ The block stores its choices as attributes in the post: `eventId`, `marketKey`, 
 
 Switching between Demo and Live (`DataModeSwitch`, on `odds_comparison/settings_saved`) clears the stored
 odds, the event index and the per-source status, then queues a refresh, so demo odds are never shown as live
-and the reverse. When the live source fails (an error newer than the last success, or its circuit is open), the
-admin notice offers **Use demo data** (`admin-post.php?action=odds_comparison_use_demo`, `manage_options` and
+and the reverse.
+
+Demo matches are not in a live feed, so a block that showed one has nothing to show after the switch to Live:
+visitors see no table, and the editor preview, the block sidebar and logged-in users who can edit the post see
+why. To make this visible, the switch stores the ids of the events that published blocks showed
+(`odds_comparison_demo_events`). Once live discovery has stored events, `DataModeSwitch::postsShowingDemoEvents()`
+lists the posts whose blocks still point at one of those events. The Status tab and the Dashboard show a warning
+with an edit link per post. Season-long events with the same id in the live feed keep working. Before the switch,
+the General tab says how many published posts have odds tables.
+
+A source is **failing** when the last request failed and there are no fresh odds (never fetched, or the last
+success is older than its "stale after" time), or its circuit is open (`StatusPage::health()`). A failed request
+between successful ones (one page, one market) only marks the source card "some requests failed"; the red notice
+is kept for a source that delivers nothing. When the live source is failing, the admin notice offers **Use demo data** (`admin-post.php?action=odds_comparison_use_demo`, `manage_options` and
 a nonce); the change goes through the settings form's own validation.
 
 ## Caching and freshness
@@ -520,6 +533,7 @@ The BettingOdds.com parser reads data attributes, not layout, so most redesigns 
 
 | Symptom | Cause and fix |
 |---|---|
+| A block shows nothing after switching to Live (editors see "its event is no longer available") | It showed a demo match, which the live feed doesn't list. The Status tab lists these posts; choose a live event in each block. |
 | No odds after switching to Live | The admin notice names the source's error and offers **Use demo data**. For live odds, configure The Odds API (README, "Going live"). |
 | Status tab: **Paused** for a source, "blocked by bot protection (challenge page)" | The site challenges server requests (BettingOdds.com does this to most servers). The plugin never tries to get around it. Switch **General → Data source** to The Odds API, or use demo data meanwhile. After fixing a cause, use **Allow paused sources again**. |
 | "Demo data has no recorded odds for …" in Recent errors | Demo data covers the Premier League only. Disable other competitions while in Demo mode, or go live. |

@@ -135,7 +135,16 @@ final class TableRendererTest extends TestCase
 
         self::assertSame(['state' => 'empty', 'message' => ''], $renderer->viewModel(['eventId' => '']));
         self::assertNotSame('', $renderer->viewModel(['eventId' => ''], true)['message'], 'preview explains');
-        self::assertSame('empty', $renderer->viewModel(self::attributes(['eventId' => 'bettingodds:gone/1']))['state']);
+        $gone = self::attributes(['eventId' => 'bettingodds:gone/1']);
+        self::assertSame(['state' => 'missing', 'message' => ''], $renderer->viewModel($gone), 'visitors: nothing');
+        self::assertStringContainsString('no longer available', $renderer->viewModel($gone, true)['message']);
+
+        $GLOBALS['odds_comparison_test_post_id'] = 7; // Front end, a user who can edit the post.
+        self::assertStringContainsString('hidden from visitors', $renderer->viewModel($gone)['message']);
+        $GLOBALS['odds_comparison_test_can'] = false;
+        self::assertSame('', $renderer->viewModel($gone)['message'], 'other logged-in users: nothing');
+        $GLOBALS['odds_comparison_test_can'] = true;
+        unset($GLOBALS['odds_comparison_test_post_id']);
         self::assertSame(
             'empty',
             $renderer->viewModel(self::attributes(['bookmakers' => ['betfred']]))['state'],

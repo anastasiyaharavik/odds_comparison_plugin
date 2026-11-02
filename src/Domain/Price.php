@@ -34,7 +34,7 @@ final class Price
     {
         if (!is_finite($decimal) || $decimal <= 1.0) {
             throw new InvalidArgumentException(
-                sprintf('Decimal odds must be a finite number above 1, got %F.', $decimal)
+                sprintf('Decimal odds must be a finite number above 1, got %F.', (float) $decimal)
             );
         }
     }

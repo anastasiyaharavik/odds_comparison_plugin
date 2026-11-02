@@ -19,6 +19,7 @@ use OddsComparison\Scheduler\DataModeSwitch;
 use OddsComparison\Settings\Settings;
 use OddsComparison\Storage\EventIndex;
 use OddsComparison\Storage\OddsRepository;
+use OddsComparison\Storage\TrackedEventsIndex;
 use OddsComparison\Support\OptionKeys;
 use OddsComparison\Support\StatusRecorder;
 use PHPUnit\Framework\TestCase;
@@ -103,7 +104,7 @@ final class DataModeSwitchTest extends TestCase
     {
         $this->seed();
 
-        $switch = new DataModeSwitch($this->repository, $this->events, $this->status);
+        $switch = new DataModeSwitch($this->repository, $this->events, $this->status, new TrackedEventsIndex());
         $switch->onSettingsSaved(['data_mode' => 'live'] + Settings::DEFAULTS, Settings::DEFAULTS);
 
         self::assertNull($this->repository->get('bettingodds:premier-league/x', 'match-result'));
@@ -113,11 +114,57 @@ final class DataModeSwitchTest extends TestCase
         self::assertNotFalse(wp_next_scheduled(CronSchedule::HOOK, ['manual']), 'refresh queued');
     }
 
+    public function testListsPostsWhoseBlocksStillShowDemoMatchesAfterGoingLive(): void
+    {
+        $this->seed();
+        $demo     = 'bettingodds:premier-league/x';
+        $outright = Event::outrights('bettingodds', 'premier-league', 'PL', '/x')->id;
+        update_option(OptionKeys::TRACKED, [
+            $demo . '|match-result'           => [
+                'eventId'   => $demo,
+                'marketKey' => 'match-result',
+                'postIds'   => [12, 5],
+            ],
+            $outright . '|outright-winner'    => [
+                'eventId'   => $outright,
+                'marketKey' => 'outright-winner',
+                'postIds'   => [5],
+            ],
+            'bettingodds:preview|match-result' => [
+                'eventId'      => 'bettingodds:preview',
+                'marketKey'    => 'match-result',
+                'previewUntil' => time() + 60,
+            ],
+        ]);
+        $switch = new DataModeSwitch($this->repository, $this->events, $this->status, new TrackedEventsIndex());
+        $live   = ['data_mode' => 'live'] + Settings::DEFAULTS;
+
+        $switch->onSettingsSaved($live, Settings::DEFAULTS);
+
+        self::assertSame([$demo, $outright], get_option(OptionKeys::DEMO_EVENTS), 'published events only');
+        self::assertSame([], $switch->postsShowingDemoEvents(), 'nothing listed before live discovery');
+
+        // Live discovery lists the season-long event again, but not the demo match.
+        $this->events->replace('bettingodds', 'premier-league', [Event::outrights(
+            'bettingodds',
+            'premier-league',
+            'Premier League Outrights',
+            '/football/premier-league/outrights'
+        )], new DateTimeImmutable());
+
+        self::assertSame([5 => [$demo], 12 => [$demo]], $switch->postsShowingDemoEvents());
+
+        $switch->onSettingsSaved(Settings::DEFAULTS, $live);
+
+        self::assertFalse(get_option(OptionKeys::DEMO_EVENTS, false), 'back to demo: nothing to warn about');
+        self::assertSame([], $switch->postsShowingDemoEvents());
+    }
+
     public function testOtherSettingChangesKeepTheData(): void
     {
         $this->seed();
 
-        $switch = new DataModeSwitch($this->repository, $this->events, $this->status);
+        $switch = new DataModeSwitch($this->repository, $this->events, $this->status, new TrackedEventsIndex());
         $switch->onSettingsSaved(['refresh_interval' => 30] + Settings::DEFAULTS, Settings::DEFAULTS);
         // "recorded" from earlier builds already meant demo data.
         $switch->onSettingsSaved(['data_mode' => 'recorded'] + Settings::DEFAULTS, Settings::DEFAULTS);
@@ -130,7 +177,7 @@ final class DataModeSwitchTest extends TestCase
     public function testRegistersOnSettingsSaved(): void
     {
         $GLOBALS['odds_comparison_test_filters'] = [];
-        (new DataModeSwitch($this->repository, $this->events, $this->status))->register();
+        (new DataModeSwitch($this->repository, $this->events, $this->status, new TrackedEventsIndex()))->register();
 
         self::assertArrayHasKey('odds_comparison/settings_saved', $GLOBALS['odds_comparison_test_filters']);
     }

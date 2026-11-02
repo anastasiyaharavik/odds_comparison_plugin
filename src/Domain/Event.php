@@ -87,7 +87,7 @@ final class Event
                 throw new InvalidArgumentException('An outrights event has no home, away or startsAt.');
             }
         } else {
-            throw new InvalidArgumentException(sprintf('Unknown event kind "%s".', $kind));
+            throw new InvalidArgumentException(sprintf('Unknown event kind %s.', json_encode($kind, Assert::JSON)));
         }
 
         $this->startsAt = $startsAt?->setTimezone(new DateTimeZone('UTC'));
@@ -245,7 +245,9 @@ final class Event
         $value = $data[$key] ?? null;
 
         if ($value !== null && !is_string($value)) {
-            throw new InvalidArgumentException(sprintf('Field "%s" must be a string or null.', $key));
+            throw new InvalidArgumentException(
+                sprintf('Field %s must be a string or null.', json_encode($key, Assert::JSON))
+            );
         }
 
         return $value;
@@ -268,7 +270,11 @@ final class Event
             || preg_match(self::LOCAL_ID_PATTERN, substr($id, strlen($prefix))) !== 1
         ) {
             throw new InvalidArgumentException(
-                sprintf('Event id must look like "%s<local-id>", got "%s".', $prefix, $id)
+                sprintf(
+                    'Event id must look like %s, got %s.',
+                    json_encode($prefix . '<local-id>', Assert::JSON),
+                    json_encode($id, Assert::JSON)
+                )
             );
         }
     }

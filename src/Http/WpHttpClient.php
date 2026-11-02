@@ -12,6 +12,7 @@ namespace OddsComparison\Http;
 
 use Closure;
 use OddsComparison\Contracts\HttpClientInterface;
+use OddsComparison\Domain\Assert;
 use OddsComparison\Support\Deadline;
 
 defined('ABSPATH') || exit;
@@ -88,7 +89,9 @@ final class WpHttpClient implements HttpClientInterface
         }
 
         if (!$this->circuitBreaker->allowRequest($host)) {
-            throw new HttpException(sprintf('Requests to %s are paused (circuit open).', $host));
+            throw new HttpException(
+                sprintf('Requests to %s are paused (circuit open).', wp_json_encode($host, Assert::JSON))
+            );
         }
 
         $attempt = 0;
@@ -124,7 +127,9 @@ final class WpHttpClient implements HttpClientInterface
             if (!$retry) {
                 $this->circuitBreaker->recordFailure($host, $reason);
 
-                throw new HttpException(sprintf('%s failed after retries: %s', esc_url_raw($shown), $reason));
+                throw new HttpException(
+                    sprintf('%s failed after retries: %s', esc_url_raw($shown), wp_json_encode($reason, Assert::JSON))
+                );
             }
 
             ($this->sleep)(self::RETRY_DELAYS[$attempt]);
@@ -226,7 +231,10 @@ final class WpHttpClient implements HttpClientInterface
     {
         $this->circuitBreaker->recordFailure($host, $reason);
 
-        throw new HttpException(sprintf('%s: %s.', esc_url_raw($shown), $reason), (int) $status);
+        throw new HttpException(
+            sprintf('%s: %s.', esc_url_raw($shown), wp_json_encode($reason, Assert::JSON)),
+            (int) $status
+        );
     }
 
     /**

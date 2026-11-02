@@ -11,6 +11,7 @@ declare(strict_types=1);
 namespace OddsComparison\Registry;
 
 use InvalidArgumentException;
+use OddsComparison\Domain\Assert;
 use OddsComparison\Plugin;
 
 defined('ABSPATH') || exit;
@@ -208,9 +209,9 @@ abstract class AbstractRegistry
 
         if (!is_array($definition)) {
             throw new InvalidArgumentException(sprintf(
-                'Entries of "%s" must be arrays or %s objects.',
-                $this->filterName(),
-                $class
+                'Entries of %s must be arrays or %s objects.',
+                wp_json_encode($this->filterName(), Assert::JSON),
+                wp_json_encode($class, Assert::JSON)
             ));
         }
 

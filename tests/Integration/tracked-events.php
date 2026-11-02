@@ -96,7 +96,7 @@ try {
         !isset($stored['test:expired/1|match-result']) && isset($stored['test:preview/2|match-result'])
     );
 
-    // DOCUMENTATION.md snippet shapes.
+    // TECHNICAL_DOCUMENTATION.md snippet shapes.
     add_filter('odds_comparison/cache_ttl', static fn (array $ttl): array => ['stale_after' => 5] + $ttl);
     $ttl = (new OddsComparison\Settings\Settings())->cacheTtl();
     $check('cache_ttl filter overrides stale_after', $ttl['stale_after'] === 5);

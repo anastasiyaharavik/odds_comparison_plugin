@@ -382,6 +382,24 @@ final class SettingsPage implements HookableInterface
             // phpcs:ignore Generic.Files.LineLength.TooLong -- translatable sentence must stay one literal.
             __('Demo data shows real odds recorded from the data source, with kick-off dates moved to the coming days, and makes no outside requests. Tables show a "Demo data" badge. Switch to Live once the data source works (see the Status tab).', 'odds-comparison')
         );
+
+        $posts = $mode === 'demo' ? $this->status->postsWithBlocks() : 0;
+
+        if ($posts > 0) {
+            printf(
+                '<p class="description oc-data-mode-note"><strong>%s</strong></p>',
+                esc_html(sprintf(
+                    /* translators: %d: number of posts. */
+                    _n(
+                        '%d published post has an odds table. Demo matches are not in the live feed: after switching to Live, choose a live event in its block (the Status tab lists the post).', // phpcs:ignore Generic.Files.LineLength.TooLong
+                        '%d published posts have odds tables. Demo matches are not in the live feed: after switching to Live, choose a live event in each block (the Status tab lists the posts).', // phpcs:ignore Generic.Files.LineLength.TooLong
+                        $posts,
+                        'odds-comparison'
+                    ),
+                    $posts
+                ))
+            );
+        }
     }
 
     /**

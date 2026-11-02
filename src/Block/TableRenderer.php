@@ -37,9 +37,11 @@ defined('ABSPATH') || exit;
  *     attributes → validation → view model → `odds_comparison/render_args`
  *       → template (theme-overridable) → `odds_comparison/table_html`
  *
- * Fallback states: (a) no event / no bookmakers → nothing (preview: a hint); (b) no stored odds
- * → "Odds temporarily unavailable" (preview: "being fetched"); (c) stale → marked; (d) match
- * started → notice without prices.
+ * Fallback states: (a) no event / no bookmakers → nothing (preview: a hint); (b) an event that is
+ * no longer indexed (a demo match after the switch to Live, or a finished event) → nothing for
+ * visitors, an explanation for the editor preview and for users who can edit the post; (c) no
+ * stored odds → "Odds temporarily unavailable" (preview: "being fetched"); (d) stale → marked;
+ * (e) match started → notice without prices.
  *
  * Output is cached per attributes, event, fetch time and stale flag, filtered bookmaker links,
  * settings, locale and date (see {@see self::cacheKey()}); the footer shows the fetch time, not
@@ -143,6 +145,16 @@ final class TableRenderer
     {
         $eventId = is_string($attributes['eventId'] ?? null) ? $attributes['eventId'] : '';
         $event   = $eventId === '' ? null : $this->events->get($eventId);
+
+        if ($event === null && $eventId !== '') {
+            return $this->message(
+                'missing',
+                $preview || $this->editorViewing()
+                    // phpcs:ignore Generic.Files.LineLength.TooLong -- translatable sentence must stay one literal.
+                    ? __('This odds table is hidden from visitors: its event is no longer available (a demo match after switching to live odds, or a finished event). Choose another event in the block settings.', 'odds-comparison')
+                    : ''
+            );
+        }
 
         if ($event === null) {
             return $this->message(
@@ -542,6 +554,18 @@ final class TableRenderer
     }
 
     /**
+     * Whether the page is viewed by someone who can edit the post being shown (front end).
+     *
+     * @return bool
+     */
+    private function editorViewing(): bool
+    {
+        $postId = (int) get_the_ID();
+
+        return $postId > 0 && current_user_can('edit_post', $postId);
+    }
+
+    /**
      * Fragment cache key, computed before the view model so a hit skips all of its work.
      *
      * It covers everything the view model depends on: the attributes, the event as indexed
@@ -587,6 +611,7 @@ final class TableRenderer
             $this->settings->all(),
             determine_locale(),
             $preview,
+            $event === null && $eventId !== '' && !$preview ? $this->editorViewing() : null,
             $wrapperAttributes,
             $instance,
             wp_date('Y-m-d', $now->getTimestamp()),

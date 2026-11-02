@@ -16,6 +16,7 @@ use OddsComparison\Http\CircuitBreaker;
 use OddsComparison\Plugin;
 use OddsComparison\Registry\BookmakerRegistry;
 use OddsComparison\Scheduler\CronSchedule;
+use OddsComparison\Scheduler\DataModeSwitch;
 use OddsComparison\Scheduler\Lock;
 use OddsComparison\Scheduler\RefreshScheduler;
 use OddsComparison\Settings\Settings;
@@ -36,6 +37,13 @@ defined('ABSPATH') || exit;
  */
 final class StatusPage implements HookableInterface
 {
+    /** Source health (see self::health()). */
+    public const PAUSED   = 'paused';
+    public const FAILING  = 'failing';
+    public const DEGRADED = 'degraded';
+    public const WAITING  = 'waiting';
+    public const WORKING  = 'working';
+
     /** Result notices of admin actions (whitelist for the `oc_notice` query arg). */
     private const ACTION_NOTICES = [
         'refresh_queued',
@@ -60,6 +68,7 @@ final class StatusPage implements HookableInterface
      * @param CronSchedule            $cron       Cron schedule.
      * @param BookmakerRegistry       $bookmakers Bookmaker registry (coverage names).
      * @param bool                    $demoAvailable Whether Demo mode can be offered (recorded data present).
+     * @param DataModeSwitch|null     $modeSwitch Demo/Live switch (posts still showing demo matches).
      */
     public function __construct(
         private readonly Settings $settings,
@@ -74,7 +83,8 @@ final class StatusPage implements HookableInterface
         private readonly Logger $logger,
         private readonly CronSchedule $cron,
         private readonly BookmakerRegistry $bookmakers,
-        private readonly bool $demoAvailable = true
+        private readonly bool $demoAvailable = true,
+        private readonly ?DataModeSwitch $modeSwitch = null
     ) {
     }
 
@@ -213,16 +223,15 @@ final class StatusPage implements HookableInterface
     {
         $source = $this->settings->activeSource();
         $health = $this->status->source($source);
-        $state  = $this->breaker->state($this->host($source));
-        $fresh  = $health['lastSuccess'] > 0
-            && time() - $health['lastSuccess'] <= $this->settings->staleAfterFor($source) * 60;
 
         [$tone, $label] = match (true) {
-            $this->settings->isDemo()                   => ['warn', __('Demo data', 'odds-comparison')],
-            $state['state'] === CircuitBreaker::OPEN    => ['bad', __('Paused', 'odds-comparison')],
-            $fresh                                      => ['ok', __('Live', 'odds-comparison')],
-            $health['lastSuccess'] === 0                => ['warn', __('Waiting for first fetch', 'odds-comparison')],
-            default                                     => ['warn', __('Not updating', 'odds-comparison')],
+            $this->settings->isDemo()                    => ['warn', __('Demo data', 'odds-comparison')],
+            default                                      => match ($this->health($source)) {
+                self::PAUSED                             => ['bad', __('Paused', 'odds-comparison')],
+                self::WORKING, self::DEGRADED            => ['ok', __('Live', 'odds-comparison')],
+                self::WAITING                            => ['warn', __('Waiting for first fetch', 'odds-comparison')],
+                default                                  => ['warn', __('Not updating', 'odds-comparison')],
+            },
         };
 
         $details = [
@@ -278,16 +287,19 @@ final class StatusPage implements HookableInterface
             $health = $this->status->source($id);
             $state  = $this->breaker->state($this->host($id));
 
+            $sourceHealth = $this->health($id);
+
             [$tone, $pill] = match (true) {
-                $state['state'] === CircuitBreaker::OPEN => ['bad', sprintf(
+                $sourceHealth === self::PAUSED => ['bad', sprintf(
                     /* translators: %s: human time difference. */
                     __('Paused for %s', 'odds-comparison'),
                     human_time_diff(time(), max(time() + 1, $state['openUntil']))
                 )],
-                $id !== $active                          => ['off', __('Not in use', 'odds-comparison')],
-                $state['failures'] > 0,
-                $health['lastErrorAt'] > $health['lastSuccess'] => ['warn', __('Active · failing', 'odds-comparison')],
-                default                                  => ['ok', __('Active · working', 'odds-comparison')],
+                $id !== $active                => ['off', __('Not in use', 'odds-comparison')],
+                $sourceHealth === self::FAILING => ['bad', __('Active · failing', 'odds-comparison')],
+                $sourceHealth === self::DEGRADED => ['warn', __('Active · some requests failed', 'odds-comparison')],
+                $sourceHealth === self::WAITING => ['warn', __('Active · no fetch yet', 'odds-comparison')],
+                default                        => ['ok', __('Active · working', 'odds-comparison')],
             };
 
             $facts = [
@@ -530,8 +542,9 @@ final class StatusPage implements HookableInterface
             return;
         }
 
-        $failing = $state['state'] === CircuitBreaker::OPEN
-            || ($health['lastErrorAt'] > 0 && $health['lastErrorAt'] >= $health['lastSuccess']);
+        // Only a source that delivers no odds is an error. A failed request between successful ones
+        // (one market, one page) is shown on the source card, not as an alarm.
+        $failing = in_array($this->health($source), [self::PAUSED, self::FAILING], true);
 
         if ($failing && $this->demoAvailable) {
             $this->demoOffer(
@@ -546,6 +559,8 @@ final class StatusPage implements HookableInterface
                 $state['lastError']
             ));
         }
+
+        $this->demoEventPosts();
 
         if ($health['robots']['allowed'] === false) {
             $this->notice('warning', sprintf(
@@ -565,6 +580,99 @@ final class StatusPage implements HookableInterface
                 $source
             ));
         }
+    }
+
+    /**
+     * Number of published posts with an odds table (tracked by their block's event).
+     *
+     * @return int
+     */
+    public function postsWithBlocks(): int
+    {
+        $ids = [];
+
+        foreach ($this->tracked->pairs() as $pair) {
+            array_push($ids, ...$pair['postIds']);
+        }
+
+        return count(array_unique($ids));
+    }
+
+    /**
+     * Warning after a switch to Live: published posts whose tables show a demo match, which the
+     * live source does not list, so visitors see no table. Links to each post's editor.
+     *
+     * @return void
+     */
+    private function demoEventPosts(): void
+    {
+        $posts = $this->modeSwitch?->postsShowingDemoEvents() ?? [];
+
+        if ($posts === []) {
+            return;
+        }
+
+        $limit = 10;
+        $items = [];
+
+        foreach (array_slice(array_keys($posts), 0, $limit) as $postId) {
+            $title = get_the_title($postId);
+            $title = $title !== '' ? $title : __('(no title)', 'odds-comparison');
+            $link  = get_edit_post_link($postId);
+            $items[] = $link
+                ? sprintf('<a href="%s">%s</a>', esc_url($link), esc_html($title))
+                : esc_html($title);
+        }
+
+        if (count($posts) > $limit) {
+            /* translators: %d: number of further posts. */
+            $items[] = esc_html(sprintf(__('and %d more', 'odds-comparison'), count($posts) - $limit));
+        }
+
+        printf(
+            '<div class="notice notice-warning"><p>%1$s</p><p>%2$s</p></div>',
+            esc_html(sprintf(
+                /* translators: %d: number of posts. */
+                _n(
+                    'Odds Comparison: %d published post shows a demo match in its odds table. The live source does not list demo matches, so visitors see no table there. Edit the post and choose a live event in the block:', // phpcs:ignore Generic.Files.LineLength.TooLong
+                    'Odds Comparison: %d published posts show demo matches in their odds tables. The live source does not list demo matches, so visitors see no table there. Edit each post and choose a live event in the block:', // phpcs:ignore Generic.Files.LineLength.TooLong
+                    count($posts),
+                    'odds-comparison'
+                ),
+                count($posts)
+            )),
+            wp_kses(implode(', ', $items), ['a' => ['href' => true]])
+        );
+    }
+
+    /**
+     * How a source is doing, from its circuit breaker and its last success and error.
+     *
+     * - paused: requests are paused after repeated failures (circuit open);
+     * - failing: the last request failed and there are no recent odds (never fetched, or the last
+     *   success is older than the source's "stale after" time), so nothing new is being shown;
+     * - degraded: some requests failed since the last success, but odds are still fresh;
+     * - waiting: nothing fetched and nothing failed yet;
+     * - working: otherwise (fresh, or old but without errors, e.g. no block uses an event).
+     *
+     * @param string $sourceId Source id.
+     * @return string One of the self::PAUSED ... self::WORKING constants.
+     */
+    public function health(string $sourceId): string
+    {
+        $health = $this->status->source($sourceId);
+        $state  = $this->breaker->state($this->host($sourceId));
+        $erred  = $health['lastErrorAt'] > 0 && $health['lastErrorAt'] >= $health['lastSuccess'];
+        $fresh  = $health['lastSuccess'] > 0
+            && time() - $health['lastSuccess'] <= $this->settings->staleAfterFor($sourceId) * 60;
+
+        return match (true) {
+            $state['state'] === CircuitBreaker::OPEN => self::PAUSED,
+            $erred && !$fresh                        => self::FAILING,
+            $erred                                   => self::DEGRADED,
+            $health['lastSuccess'] === 0             => self::WAITING,
+            default                                  => self::WORKING,
+        };
     }
 
     /**

@@ -16,14 +16,12 @@ from these sources, with kick-off dates moved to the coming days (they never go 
 "Demo data". When you are ready for live odds, see [Going live](#going-live).
 
 Odds are fetched in the background (WP-Cron) and stored. Pages only read stored odds, so a block adds a few
-milliseconds and no outside requests to a page view ([measurements](DOCUMENTATION.md#performance)).
+milliseconds and no outside requests to a page view ([measurements](TECHNICAL_DOCUMENTATION.md#performance)).
 
 | Document | For |
 |---|---|
 | This README | installing, configuring and using the plugin |
-| [DOCUMENTATION.md](DOCUMENTATION.md) | developers: architecture, data model, extension guide with examples, hooks, troubleshooting |
-
-**Demo:** the link and reviewer accounts will be added here.
+| [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) | developers: architecture, data model, extension guide with examples, hooks, troubleshooting |
 
 ## Requirements
 
@@ -62,7 +60,9 @@ Demo data needs no setup. For live odds:
    **Live odds from the data source**, then save.
 
 Switching between demo and live clears the stored odds and events and starts a refresh, so demo odds are never
-shown as live. If the live source stops responding, the Status tab and the Dashboard show the error, what to do,
+shown as live. **Blocks that show a demo match need a new event:** live sources list other matches, so those
+tables are hidden from visitors until you pick a live event in the block. The General tab tells you how many
+published posts have odds tables before you switch, and afterwards the Status tab lists the posts to edit. If the live source stops responding, the Status tab and the Dashboard show the error, what to do,
 and a **Use demo data** button.
 
 ### 1. Add The Odds API key (recommended)
@@ -169,7 +169,7 @@ wp cron event run --due-now --path=/path/to/wordpress
 ## Assumptions
 
 - **Football by default.** Competitions, markets and bookmakers are data, not code, so other sports are
-  configuration ([extension guide](DOCUMENTATION.md#extension-guide)).
+  configuration ([extension guide](TECHNICAL_DOCUMENTATION.md#extension-guide)).
 - **A block shows one event and one market.** An event is a match (Chelsea v Manchester United) or a
   competition's season-long markets (outright winner, top goalscorer, relegation, top 4).
 - **Default source: BettingOdds.com**. Its address is fixed

@@ -280,7 +280,7 @@ final class StorageAndRefreshTest extends TestCase
         self::assertGreaterThan(10, $refresher->discover('bettingodds', $competitions->get('premier-league')));
         self::assertNotNull($events->get($chelsea));
 
-        // DOCUMENTATION.md snippet shapes: mutate before save, purge after save.
+        // TECHNICAL_DOCUMENTATION.md snippet shapes: mutate before save, purge after save.
         add_filter('odds_comparison/market_odds', static fn (MarketOdds $odds): MarketOdds => $odds->withSelections(
             array_intersect_key($odds->selections, ['home' => true, 'draw' => true, 'away' => true])
         ));

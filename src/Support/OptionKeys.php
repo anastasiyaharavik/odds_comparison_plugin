@@ -38,6 +38,9 @@ final class OptionKeys
     /** Refresh-run lock (autoload: no). */
     public const LOCK = 'odds_comparison_lock';
 
+    /** Events shown by published blocks when the site switched from Demo to Live (autoload: no). */
+    public const DEMO_EVENTS = 'odds_comparison_demo_events';
+
     /** Transient names of stored odds, so the cache can be flushed without SQL (autoload: no). */
     public const ODDS_KEYS = 'odds_comparison_odds_keys';
 
@@ -70,6 +73,7 @@ final class OptionKeys
             self::STATUS,
             self::LOCK,
             self::ODDS_KEYS,
+            self::DEMO_EVENTS,
         ];
     }
 }
