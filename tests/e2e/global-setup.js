@@ -1,6 +1,6 @@
 /**
  * Prepares the local WordPress for the browser tests:
- * Recorded mode (real captured BettingOdds.com pages, no network, no API credits), a temporary
+ * Demo mode (real captured BettingOdds.com pages, no network, no API credits), a temporary
  * administrator, a published post with the block, and one real refresh run. Everything changed
  * here is backed up and restored by global-teardown.js.
  */
@@ -53,7 +53,7 @@ module.exports = async function globalSetup( config ) {
 
 	wpEval( `
 		$s = array_replace((array) get_option('odds_comparison_settings', []), [
-			'data_mode' => 'recorded', 'active_source' => 'bettingodds',
+			'data_mode' => 'demo', 'active_source' => 'bettingodds',
 			'enabled_competitions' => ['premier-league'], 'enabled_markets' => ['match-result', 'outright-winner'],
 			'bookmakers' => [], 'bookmaker_order' => [], 'default_odds_format' => 'fractional',
 		]);

@@ -209,8 +209,8 @@ abstract class AbstractRegistry
         if (!is_array($definition)) {
             throw new InvalidArgumentException(sprintf(
                 'Entries of "%s" must be arrays or %s objects.',
-                esc_html($this->filterName()),
-                esc_html($class)
+                $this->filterName(),
+                $class
             ));
         }
 

@@ -26,14 +26,14 @@ final class SettingsSanitizerTest extends TestCase
     /** @var list<string> */
     private array $probed = [];
 
-    private function sanitizer(?string $probeError = null, bool $recorded = false): SettingsSanitizer
+    private function sanitizer(?string $probeError = null, bool $demo = false): SettingsSanitizer
     {
         return new SettingsSanitizer(
             self::COMPETITIONS,
             self::MARKETS,
             self::BOOKMAKERS,
             ['bettingodds', 'theoddsapi'],
-            $recorded,
+            $demo,
             function (string $source) use ($probeError): ?string {
                 $this->probed[] = $source;
 
@@ -49,6 +49,7 @@ final class SettingsSanitizerTest extends TestCase
     private static function current(): array
     {
         return array_replace(Settings::DEFAULTS, [
+            'data_mode'            => 'live',
             'enabled_competitions' => ['premier-league'],
             'bookmakers'           => [
                 'william-hill' => ['enabled' => true, 'label' => '', 'link' => 'https://aff.example/wh'],
@@ -181,15 +182,23 @@ final class SettingsSanitizerTest extends TestCase
         self::assertSame([], $this->probed, 'no network request when the source does not change');
     }
 
-    public function testRecordedModeNeedsFixtures(): void
+    public function testDemoModeNeedsRecordedData(): void
     {
-        $input = self::general(['data_mode' => 'recorded']);
+        $input = self::general(['data_mode' => 'demo']);
 
         $result = $this->save($input);
         self::assertSame('live', $result['settings']['data_mode']);
         self::assertSame('data_mode', $result['errors'][0]['code']);
 
-        self::assertSame('recorded', $this->save($input, $this->sanitizer(recorded: true))['settings']['data_mode']);
+        self::assertSame('demo', $this->save($input, $this->sanitizer(demo: true))['settings']['data_mode']);
+    }
+
+    public function testUnknownDataModeIsRejected(): void
+    {
+        $result = $this->save(self::general(['data_mode' => 'recorded']), $this->sanitizer(demo: true));
+
+        self::assertSame('live', $result['settings']['data_mode']);
+        self::assertSame('data_mode', $result['errors'][0]['code']);
     }
 
     public function testBookmakerRowsLinksLabelsAndOrder(): void
@@ -314,6 +323,7 @@ final class SettingsSanitizerTest extends TestCase
             'requests too high'    => ['requests_per_run', '51'],
             'requests negative'    => ['requests_per_run', '-5'],
             'interval too low'     => ['min_request_interval', '1'],
+            'interval above 10 s'  => ['min_request_interval', '20'],
             'api interval invalid' => ['api_refresh_interval', '30'],
         ];
     }

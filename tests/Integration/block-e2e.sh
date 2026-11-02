@@ -3,8 +3,8 @@
 #
 #   tests/Integration/block-e2e.sh            # defaults: http://localhost:8080, container wordpress_app
 #
-# Runs in Recorded mode: real BettingOdds.com pages captured in fixtures/ replace network access,
-# so no API credits are used and results are deterministic. Creates temporary users and posts,
+# Runs in Demo mode: real BettingOdds.com pages captured in fixtures/ replace network access,
+# so no API credits are used and prices are deterministic. Creates temporary users and posts,
 # runs the real refresh, checks the frontend HTML, editor REST routes and the editor preview,
 # then restores the settings, tracked pairs and cached odds. Exit status 1 on any failure.
 set -uo pipefail
@@ -61,11 +61,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Backup (empty file = option absent) and switch to Recorded mode (real captured pages, no network).
+# Backup (empty file = option absent) and switch to Demo mode (real captured pages, no network).
 for option in "${OPTIONS[@]}"; do wp option get "$option" --format=json > "$WORK/$option.json" || : > "$WORK/$option.json"; done
 [[ -s "$WORK/odds_comparison_settings.json" ]]; check "settings backed up" $?
 wp eval '$s = (array) get_option("odds_comparison_settings", []);
-    update_option("odds_comparison_settings", array_replace($s, ["data_mode" => "recorded", "active_source" => "bettingodds",
+    update_option("odds_comparison_settings", array_replace($s, ["data_mode" => "demo", "active_source" => "bettingodds",
         "enabled_competitions" => ["premier-league"], "enabled_markets" => ["match-result", "outright-winner"], "bookmakers" => []]));
     delete_option("odds_comparison_tracked"); delete_transient("odds_comparison_cb_" . md5("www.bettingodds.com"));' >/dev/null
 
@@ -93,8 +93,8 @@ links=$(count 'rel="nofollow sponsored noopener" target="_blank"' "$WORK/full.ht
 [[ "$names" -ge 10 && "$links" == "$names" && "$(count '<a class="oc-odds__price' "$WORK/full.html")" == "0" ]]; check "bookmaker names link with rel nofollow sponsored noopener, prices do not ($links links)" $?
 grep -q 'data-dec="1.83" data-frac="5/6" data-us="-120"' "$WORK/full.html"; check "prices carry all three formats" $?
 grep -q 'class="oc-odds__cell is-best"' "$WORK/full.html" && grep -q 'best odds</span>' "$WORK/full.html"; check "best price marked with text, not colour only" $?
-grep -q '<time datetime="2026-10-30T12:28:06+00:00">Updated just now</time>' "$WORK/full.html"; check "freshness footer with <time>" $?
-grep -q 'Recorded data' "$WORK/full.html" && grep -q '18+ | Odds subject to change' "$WORK/full.html"; check "recorded badge and disclaimer" $?
+grep -Eq '<time datetime="[0-9T:+-]+">Updated [0-9]{1,2}:[0-9]{2}</time>' "$WORK/full.html"; check "freshness footer with <time>" $?
+grep -q 'Demo data' "$WORK/full.html" && grep -q '18+ | Odds subject to change' "$WORK/full.html"; check "demo badge and disclaimer" $?
 grep -q 'role="region" aria-labelledby=' "$WORK/full.html" && grep -q 'tabindex="0"' "$WORK/full.html"; check "focusable labelled scroll region" $?
 grep -q 'odds-table/view.js' "$WORK/full.html" && grep -q 'odds-table/style-index.css' "$WORK/full.html"; check "view script and style loaded with the block" $?
 grep -q 'class="oc-odds__switcher" hidden' "$WORK/full.html"; check "format switcher hidden until JS enables it" $?

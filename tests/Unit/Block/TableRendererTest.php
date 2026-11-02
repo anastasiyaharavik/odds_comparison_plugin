@@ -223,7 +223,7 @@ final class TableRendererTest extends TestCase
             $pp['link'],
             'default URL when no affiliate link'
         );
-        self::assertSame('Updated 5 minutes ago', $model['updated']);
+        self::assertSame('Updated 11:55', $model['updated'], 'fetch time, not "5 minutes ago"');
         self::assertFalse($model['stale']);
         self::assertSame('18+ | Odds subject to change. Gamble responsibly.', $model['disclaimer']);
 
@@ -268,7 +268,44 @@ final class TableRendererTest extends TestCase
         self::assertSame('Chelsea to win?', $model['subtitle'], 'custom caption replaces competition · market');
         self::assertSame([], $model['bestOffers'], 'no best-price summary when highlighting is off');
         self::assertTrue($model['stale'], '90 minutes > stale_after 60');
-        self::assertSame('Updated 1 hour ago', $model['updated']);
+        self::assertSame('Updated 10:30', $model['updated']);
+    }
+
+    public function testCacheKeyIgnoresTheClockButFollowsLinkFilters(): void
+    {
+        $this->storeMatchOdds();
+        $now      = new DateTimeImmutable(self::NOW);
+        $renderer = fn (DateTimeImmutable $at): TableRenderer => new TableRenderer(
+            new Settings(),
+            new BookmakerRegistry(self::ROOT . 'config/bookmakers.php'),
+            new MarketRegistry(self::ROOT . 'config/markets.php'),
+            new CompetitionRegistry(self::ROOT . 'config/competitions.php'),
+            new EventIndex(),
+            $this->repository,
+            new OddsConverter(),
+            self::ROOT . 'templates',
+            static fn (): DateTimeImmutable => $at
+        );
+
+        $first = $renderer($now)->render(self::attributes());
+        $GLOBALS['odds_comparison_test_cache']['odds_comparison'] = array_map(
+            static fn (string $html): string => $html . '<!-- cached -->',
+            $GLOBALS['odds_comparison_test_cache']['odds_comparison'] ?? []
+        );
+
+        // Three minutes later nothing visible changed: the cached HTML is served.
+        self::assertSame($first . '<!-- cached -->', $renderer($now->modify('+3 minutes'))->render(self::attributes()));
+
+        // A link filter added later changes the output, so the cache is bypassed.
+        add_filter(
+            'odds_comparison/bookmaker_link',
+            static fn (string $link): string => $link . '?ref=new',
+            10,
+            1
+        );
+        $filtered = $renderer($now->modify('+3 minutes'))->render(self::attributes());
+        self::assertStringNotContainsString('<!-- cached -->', $filtered);
+        self::assertStringContainsString('?ref=new', $filtered);
     }
 
     public function testOutrightTableIsTransposedWithFavouritesFirst(): void
@@ -332,6 +369,24 @@ final class TableRendererTest extends TestCase
         // Best-offer summary: "at <bookmaker link>".
         self::assertMatchesRegularExpression('#oc-odds__offer-at">\s*at <a class="oc-odds__bookmaker"#', $html);
         self::assertStringContainsString('(opens in a new tab)', $html);
+    }
+
+    public function testDemoDataIsMarkedAndLiveDataIsNot(): void
+    {
+        $this->storeMatchOdds();
+        $demo = $this->renderer()->render(self::attributes());
+
+        self::assertTrue($this->renderer()->viewModel(self::attributes())['demo'], 'new installs show demo data');
+        self::assertStringContainsString('<span class="oc-odds__badge">Demo data</span>', $demo);
+
+        update_option(
+            OptionKeys::SETTINGS,
+            ['data_mode' => 'live'] + (array) get_option(OptionKeys::SETTINGS, [])
+        );
+        $GLOBALS['odds_comparison_test_cache'] = [];
+        $live = $this->renderer()->render(self::attributes());
+
+        self::assertStringNotContainsString('oc-odds__badge', $live);
     }
 
     public function testOutrightBookmakerColumnHeadersLink(): void

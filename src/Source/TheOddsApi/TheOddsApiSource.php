@@ -45,7 +45,7 @@ final class TheOddsApiSource extends AbstractSource
     public const ID = 'theoddsapi';
 
     /** Hardcoded base URL (SSRF guard). */
-    private const BASE_URL = 'https://api.the-odds-api.com';
+    public const BASE_URL = 'https://api.the-odds-api.com';
 
     /** Bookmaker region. */
     private const REGION = 'uk';

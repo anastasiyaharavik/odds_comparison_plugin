@@ -42,7 +42,7 @@ final class BettingOddsSource extends AbstractSource
     public const ID = 'bettingodds';
 
     /** Hardcoded base URL; only registry paths and validated scraped paths are appended (SSRF guard). */
-    private const BASE_URL = 'https://www.bettingodds.com';
+    public const BASE_URL = 'https://www.bettingodds.com';
 
     /** Time zone of listing times. */
     private const TIMEZONE = 'Europe/London';

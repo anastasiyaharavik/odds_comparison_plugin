@@ -15,6 +15,7 @@ use DateTimeImmutable;
 use OddsComparison\Contracts\HookableInterface;
 use OddsComparison\Contracts\OddsRepositoryInterface;
 use OddsComparison\Domain\Event;
+use OddsComparison\Domain\Market;
 use OddsComparison\Registry\BookmakerRegistry;
 use OddsComparison\Registry\CompetitionRegistry;
 use OddsComparison\Registry\MarketRegistry;
@@ -59,7 +60,7 @@ final class EditorController implements HookableInterface
      * @param CompetitionRegistry     $competitions Competition registry.
      * @param OddsRepositoryInterface $repository   Odds storage.
      * @param TrackedEventsIndex      $tracked      Tracked pairs.
-     * @param Closure|null            $clock        fn(): DateTimeImmutable; "now" (capture time in Recorded mode).
+     * @param Closure|null            $clock        fn(): DateTimeImmutable; "now".
      */
     public function __construct(
         private readonly Settings $settings,
@@ -149,22 +150,24 @@ final class EditorController implements HookableInterface
      */
     public function getEvents(WP_REST_Request $request): WP_REST_Response
     {
-        $now    = ($this->clock)();
-        $events = array_filter(
-            $this->events->search(
-                $this->settings->activeSource(),
-                (string) $request['search'],
-                (int) $request['per_page']
-            ),
-            static fn (Event $event): bool => !$event->hasStarted($now)
+        $now     = ($this->clock)();
+        $events  = $this->events->search(
+            $this->settings->activeSource(),
+            (string) $request['search'],
+            (int) $request['per_page'],
+            $now
         );
         $include = is_string($request['include']) ? $this->events->get($request['include']) : null;
 
+        // The block's own event is listed so the picker can show it, marked when it has started.
         if ($include !== null && !in_array($include, $events, true)) {
             array_unshift($events, $include);
         }
 
-        return new WP_REST_Response(array_values(array_map([$this, 'eventData'], $events)));
+        return new WP_REST_Response(array_values(array_map(
+            fn (Event $event): array => $this->eventData($event, $now),
+            $events
+        )));
     }
 
     /**
@@ -179,20 +182,8 @@ final class EditorController implements HookableInterface
         $markets = [];
 
         foreach ($this->markets->only($this->settings->enabledMarkets()) as $market) {
-            $offered = $event === null || (
-                $market->isOutright() === $event->isOutright() && $market->sourceName($event->sourceId) !== null
-            );
-
-            if (!$offered) {
+            if ($event !== null && !$this->offers($event, $market)) {
                 continue;
-            }
-
-            if ($event !== null && $market->isOutright()) {
-                $competition = $this->competitions->get($event->competition);
-
-                if ($competition?->outrightPath($event->sourceId, $market->key) === null) {
-                    continue;
-                }
             }
 
             $markets[] = ['key' => $market->key, 'label' => $market->label, 'outright' => $market->isOutright()];
@@ -254,6 +245,19 @@ final class EditorController implements HookableInterface
             );
         }
 
+        $event  = $this->events->get($eventId);
+        $market = $this->markets->get($marketKey);
+
+        // E.g. an outrights event with Match Result: it could never be priced, and tracking it
+        // would make every refresh request it for a day.
+        if ($event === null || $market === null || !$this->offers($event, $market)) {
+            return new WP_Error(
+                'odds_comparison_incompatible_pair',
+                __('This market is not available for this event.', 'odds-comparison'),
+                ['status' => 400]
+            );
+        }
+
         $this->tracked->trackPreview($eventId, $marketKey);
         $cached = $this->repository->get($eventId, $marketKey) !== null;
 
@@ -265,17 +269,38 @@ final class EditorController implements HookableInterface
     }
 
     /**
+     * Whether a market can be priced for an event: same kind (match or outrights), named on the
+     * event's source and, for outright markets, listed for the event's competition.
+     *
+     * @param Event  $event  Event.
+     * @param Market $market Market.
+     * @return bool
+     */
+    private function offers(Event $event, Market $market): bool
+    {
+        if ($market->isOutright() !== $event->isOutright() || $market->sourceName($event->sourceId) === null) {
+            return false;
+        }
+
+        return !$market->isOutright()
+            || $this->competitions->get($event->competition)?->outrightPath($event->sourceId, $market->key) !== null;
+    }
+
+    /**
      * Event as editor data.
      *
-     * @param Event $event Event.
+     * @param Event             $event Event.
+     * @param DateTimeImmutable $now   Current time.
      * @return array<string, mixed>
      */
-    private function eventData(Event $event): array
+    private function eventData(Event $event, DateTimeImmutable $now): array
     {
         $competition = $this->competitions->get($event->competition)?->name ?? $event->competition;
+        $started     = $event->hasStarted($now);
         $when        = $event->startsAt === null
             ? __('season', 'odds-comparison')
             : wp_date(__('D j M, H:i', 'odds-comparison'), $event->startsAt->getTimestamp());
+        $label       = $competition . ' · ' . $when . ' — ' . $event->name;
 
         return [
             'id'          => $event->id,
@@ -283,7 +308,9 @@ final class EditorController implements HookableInterface
             'kind'        => $event->kind,
             'competition' => $competition,
             'startsAt'    => $event->startsAt?->format(DATE_ATOM),
-            'label'       => $competition . ' · ' . $when . ' — ' . $event->name,
+            'started'     => $started,
+            /* translators: %s: event label (competition, date and name). */
+            'label'       => $started ? sprintf(__('%s (started)', 'odds-comparison'), $label) : $label,
         ];
     }
 }

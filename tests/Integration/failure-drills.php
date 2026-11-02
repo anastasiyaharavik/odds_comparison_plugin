@@ -37,6 +37,7 @@ use OddsComparison\Scheduler\OddsRefresher;
 use OddsComparison\Settings\Settings;
 use OddsComparison\Source\BettingOdds\BettingOddsSource;
 use OddsComparison\Source\SourceFactory;
+use OddsComparison\Storage\EventIndex;
 use OddsComparison\Support\OptionKeys;
 
 defined('ABSPATH') || exit;
@@ -139,7 +140,7 @@ try {
     $seed->discover('bettingodds', $plugin->competitions()->get('premier-league'));
 
     $match = null;
-    foreach ($plugin->events()->search('bettingodds', '', 100) as $event) {
+    foreach ($plugin->events()->search('bettingodds', '', 100, $capturedAt) as $event) {
         if (!$event->isOutright() && !$event->hasStarted($capturedAt)) {
             $match = $event;
             break;
@@ -178,7 +179,7 @@ try {
     };
 
     // --- Drills ---------------------------------------------------------------------------------
-    $noOddsPage = $root . 'fixtures/bettingodds/premier-league-stats-no-odds.html';
+    $noOddsPage = $root . 'fixtures/bettingodds/premier-league-stats-no-odds.txt';
     $drills     = [
         '403 bot challenge'      => [
             static fn (): array => [
@@ -243,6 +244,32 @@ try {
                 'paused (circuit open)'
             ));
         }
+    }
+
+    // --- Discovery: HTTP 200 pages without matches must not wipe the stored events ---------------
+    $competition = $plugin->competitions()->get('premier-league');
+    $eventsBefore = array_keys($plugin->events()->all());
+    $blankPages   = [
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+        'real page without matches' => (string) file_get_contents($noOddsPage),
+        'empty 200 body'            => '',
+        'truncated 200 body'        => '<html><body><div class="day-container">',
+    ];
+
+    foreach ($blankPages as $name => $body) {
+        $breaker->reset(OC_DRILL_HOST);
+        $plugin->logger()->clear();
+        $http(static fn (): array => [
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'headers'  => [],
+            'body'     => $body,
+        ]);
+
+        $found = $refresherOn($live)->discover('bettingodds', $competition);
+
+        $check("discovery, $name: reported as a failure", $found === null && $plugin->logger()->entries() !== []);
+        $check("discovery, $name: stored events kept", array_keys((new EventIndex())->all()) === $eventsBefore);
+        $check("discovery, $name: blocks still show the stored prices", $renders());
     }
 
     remove_all_filters('pre_http_request');

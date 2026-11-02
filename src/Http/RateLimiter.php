@@ -81,7 +81,7 @@ final class RateLimiter
 
         $now                      = ($this->clock)();
         $this->lastRequest[$host] = $now;
-        set_transient($this->key($host), (string) $now, self::MEMORY_SECONDS);
+        set_transient(self::transientName($host), (string) $now, self::MEMORY_SECONDS);
     }
 
     /**
@@ -109,7 +109,7 @@ final class RateLimiter
      */
     private function lastRequestAt(string $host): float
     {
-        return max($this->lastRequest[$host] ?? 0.0, (float) get_transient($this->key($host)));
+        return max($this->lastRequest[$host] ?? 0.0, (float) get_transient(self::transientName($host)));
     }
 
     /**
@@ -118,7 +118,7 @@ final class RateLimiter
      * @param string $host Host name.
      * @return string
      */
-    private function key(string $host): string
+    public static function transientName(string $host): string
     {
         return OptionKeys::TRANSIENT_PREFIX . 'rl_' . md5($host);
     }

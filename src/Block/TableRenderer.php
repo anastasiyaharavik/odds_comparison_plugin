@@ -41,9 +41,11 @@ defined('ABSPATH') || exit;
  * → "Odds temporarily unavailable" (preview: "being fetched"); (c) stale → marked; (d) match
  * started → notice without prices.
  *
- * Output is cached per attributes, event, fetch time, settings, locale and minute (the footer shows
- * "Updated N min ago"). The cache is checked before the view model is built, so a hit skips the
- * price conversions too. Without a persistent object cache, the cache only spans the request.
+ * Output is cached per attributes, event, fetch time and stale flag, filtered bookmaker links,
+ * settings, locale and date (see {@see self::cacheKey()}); the footer shows the fetch time, not
+ * "N min ago", so nothing in the key changes by the minute. The cache is checked before the view
+ * model is built, so a hit skips the price conversions too. Without a persistent object cache, the
+ * cache only spans the request.
  */
 final class TableRenderer
 {
@@ -70,7 +72,7 @@ final class TableRenderer
      * @param OddsRepositoryInterface $repository   Odds storage.
      * @param OddsConverter           $converter    Odds converter (all three formats per price).
      * @param string                  $templateDir  Plugin templates directory.
-     * @param Closure|null            $clock        fn(): DateTimeImmutable ("now"; capture time in Recorded mode).
+     * @param Closure|null            $clock        fn(): DateTimeImmutable ("now").
      */
     public function __construct(
         private readonly Settings $settings,
@@ -285,7 +287,7 @@ final class TableRenderer
             'fetchedAt'    => $odds->fetchedAt,
             'updated'      => $this->updatedText($odds->fetchedAt, $now),
             'stale'        => $this->repository->isStale($odds),
-            'recorded'     => $this->settings->dataMode() === 'recorded',
+            'demo'         => $this->settings->isDemo(),
             'disclaimer'   => is_string($disclaimer) ? $disclaimer : '',
             'eventId'      => $event->id,
             'marketKey'    => $market->key,
@@ -503,7 +505,9 @@ final class TableRenderer
     }
 
     /**
-     * "Updated 5 minutes ago" style text.
+     * When the odds were fetched, in the site's time zone: "Updated 14:05", or "Updated 1 Nov,
+     * 14:05" when not today. An absolute time (unlike "5 minutes ago") stays true while the HTML
+     * is cached, so the cache key does not have to change every minute.
      *
      * @param DateTimeImmutable $fetchedAt Fetch time.
      * @param DateTimeImmutable $now       Now.
@@ -511,24 +515,18 @@ final class TableRenderer
      */
     private function updatedText(DateTimeImmutable $fetchedAt, DateTimeImmutable $now): string
     {
-        $minutes = intdiv(max(0, $now->getTimestamp() - $fetchedAt->getTimestamp()), 60);
+        $time  = $fetchedAt->getTimestamp();
+        $today = wp_date('Y-m-d', $time) === wp_date('Y-m-d', $now->getTimestamp());
 
-        if ($minutes < 1) {
-            return __('Updated just now', 'odds-comparison');
-        }
-
-        if ($minutes < 60) {
-            return sprintf(
-                /* translators: %d: minutes. */
-                _n('Updated %d minute ago', 'Updated %d minutes ago', $minutes, 'odds-comparison'),
-                $minutes
-            );
-        }
-
-        $hours = intdiv($minutes, 60);
-
-        /* translators: %d: hours. */
-        return sprintf(_n('Updated %d hour ago', 'Updated %d hours ago', $hours, 'odds-comparison'), $hours);
+        return sprintf(
+            /* translators: %s: time (or date and time) the odds were fetched. */
+            __('Updated %s', 'odds-comparison'),
+            $today
+                /* translators: time format, see https://www.php.net/manual/datetime.format.php */
+                ? wp_date(__('H:i', 'odds-comparison'), $time)
+                /* translators: date and time format, see https://www.php.net/manual/datetime.format.php */
+                : wp_date(__('j M, H:i', 'odds-comparison'), $time)
+        );
     }
 
     /**
@@ -547,9 +545,12 @@ final class TableRenderer
      * Fragment cache key, computed before the view model so a hit skips all of its work.
      *
      * It covers everything the view model depends on: the attributes, the event as indexed
-     * (name, kick-off, started or not), the stored odds' fetch time, the settings, the locale and
-     * the current minute (the footer shows "Updated N min ago" and the stale flag). The event and
-     * odds lookups are memoized per request, so the later view model build reads them for free.
+     * (name, kick-off, started or not), the stored odds' fetch time and stale flag, the
+     * bookmakers' links as filtered by `odds_comparison/bookmaker_link`, the settings, the locale
+     * and the site's current date (the footer adds the date to the fetch time on other days).
+     * Nothing in it changes by the minute, so a cached table is reused until something visible
+     * changes. The event and odds lookups are memoized per request, so the later view model build
+     * reads them for free.
      *
      * @param array<string, mixed> $attributes        Attributes.
      * @param bool                 $preview           Preview flag.
@@ -564,6 +565,14 @@ final class TableRenderer
         $marketKey = is_string($attributes['marketKey'] ?? null) ? $attributes['marketKey'] : '';
         $event     = $eventId === '' ? null : $this->events->get($eventId);
         $odds      = $event === null || $marketKey === '' ? null : $this->repository->get($event->id, $marketKey);
+        $market    = $event === null ? null : $this->enabledMarket($marketKey);
+        $links     = [];
+
+        if ($event !== null && $market !== null) {
+            foreach ($this->bookmakersFor($attributes['bookmakers'] ?? []) as $slug => $bookmaker) {
+                $links[$slug] = $this->link($bookmaker, $event, $market);
+            }
+        }
 
         return 'table_' . md5((string) wp_json_encode([
             $attributes,
@@ -573,12 +582,14 @@ final class TableRenderer
                 $event->hasStarted($now),
             ],
             $odds?->fetchedAt->getTimestamp(),
+            $odds === null ? null : $this->repository->isStale($odds),
+            $links,
             $this->settings->all(),
             determine_locale(),
             $preview,
             $wrapperAttributes,
             $instance,
-            intdiv($now->getTimestamp(), 60),
+            wp_date('Y-m-d', $now->getTimestamp()),
         ]));
     }
 

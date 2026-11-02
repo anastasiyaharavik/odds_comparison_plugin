@@ -15,6 +15,7 @@ use DateTimeImmutable;
 use InvalidArgumentException;
 use OddsComparison\Contracts\OddsRepositoryInterface;
 use OddsComparison\Domain\Competition;
+use OddsComparison\Domain\Event;
 use OddsComparison\Domain\MarketOdds;
 use OddsComparison\Http\TimeBudgetExceeded;
 use OddsComparison\Contracts\DiagnosticsInterface;
@@ -151,6 +152,12 @@ final class OddsRefresher
     /**
      * Rediscover a competition's events on a source and replace them in the index.
      *
+     * A listing that yields no matches while upcoming matches of the competition are stored is a
+     * failure, not news: a blank, truncated or changed page answered with HTTP 200 must not wipe
+     * the events that published tables show. The stored events stay and `source_failed` fires
+     * (Status tab, error log). Once the stored matches have kicked off, an empty listing is
+     * accepted (end of season, international break).
+     *
      * @param string      $sourceId    Source id.
      * @param Competition $competition Competition.
      * @return int|null Number of events found, or null on failure or when the run is out of time
@@ -168,7 +175,22 @@ final class OddsRefresher
             return null;
         }
 
-        $this->events->replace($sourceId, $competition->slug, $events, ($this->clock)());
+        $now     = ($this->clock)();
+        $matches = count(array_filter($events, static fn (Event $event): bool => !$event->isOutright()));
+        $stored  = $this->events->upcomingMatchCount($sourceId, $competition->slug, $now);
+
+        if ($matches === 0 && $stored > 0) {
+            $this->fail($sourceId, sprintf(
+                '%s listing returned no matches although %d upcoming match(es) are stored; '
+                . 'the page may be empty, blocked or changed. Stored events were kept.',
+                $competition->name,
+                $stored
+            ));
+
+            return null;
+        }
+
+        $this->events->replace($sourceId, $competition->slug, $events, $now);
 
         return count($events);
     }
@@ -260,7 +282,7 @@ final class OddsRefresher
         );
         sort($normalized);
 
-        $key         = OptionKeys::TRANSIENT_PREFIX . 'diag_' . md5($sourceId . '|' . $kind);
+        $key         = self::diagnosticsTransient($sourceId, $kind);
         $fingerprint = md5(implode("\n", array_unique($normalized)));
 
         if (get_transient($key) === $fingerprint) {
@@ -269,6 +291,18 @@ final class OddsRefresher
 
         set_transient($key, $fingerprint, self::REMIND_AFTER);
         $this->logger->warning($sourceId, $message);
+    }
+
+    /**
+     * Transient remembering the last logged diagnostics of one kind (uninstall deletes it).
+     *
+     * @param string $sourceId Source id.
+     * @param string $kind     `warnings` or `unmapped`.
+     * @return string
+     */
+    public static function diagnosticsTransient(string $sourceId, string $kind): string
+    {
+        return OptionKeys::TRANSIENT_PREFIX . 'diag_' . md5($sourceId . '|' . $kind);
     }
 
     /**

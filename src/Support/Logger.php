@@ -21,7 +21,10 @@ defined('ABSPATH') || exit;
  * Messages are plain text and are escaped where they are displayed. No personal data is logged,
  * and API keys are redacted before storage.
  *
- * @phpstan-type Entry array{time: int, level: string, source: string, message: string}
+ * An entry that repeats the newest one (same level, source and message) is not added again: the
+ * newest entry's `count` goes up and its `time` moves to the latest occurrence.
+ *
+ * @phpstan-type Entry array{time: int, level: string, source: string, message: string, count?: int}
  */
 final class Logger
 {
@@ -91,10 +94,32 @@ final class Logger
     private function log(string $level, string $source, string $message): void
     {
         $message = mb_substr(WpHttpClient::redact(trim($message)), 0, self::MAX_MESSAGE_LENGTH);
-        $entry   = ['time' => time(), 'level' => $level, 'source' => $source, 'message' => $message];
-        $entries = array_slice([$entry, ...$this->entries()], 0, self::MAX_ENTRIES);
+        $now     = time();
 
-        update_option(OptionKeys::ERRORS, $entries, false);
+        $add = static function (mixed $stored) use ($level, $source, $message, $now): array {
+            $entries = is_array($stored) ? array_values(array_filter($stored, 'is_array')) : [];
+            $newest  = $entries[0] ?? null;
+
+            // The same problem again (e.g. every pair of a run hitting an open circuit): one entry
+            // with a count and the latest time, so repeats cannot push real errors out of the log.
+            if (
+                $newest !== null
+                && ($newest['level'] ?? '') === $level
+                && ($newest['source'] ?? '') === $source
+                && ($newest['message'] ?? '') === $message
+            ) {
+                $entries[0]['count'] = max(1, (int) ($newest['count'] ?? 1)) + 1;
+                $entries[0]['time']  = $now;
+
+                return $entries;
+            }
+
+            $entry = ['time' => $now, 'level' => $level, 'source' => $source, 'message' => $message, 'count' => 1];
+
+            return array_slice([$entry, ...$entries], 0, self::MAX_ENTRIES);
+        };
+
+        OptionMutex::update(OptionKeys::ERRORS, $add);
 
         if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- opt-in via WP_DEBUG_LOG.

@@ -26,15 +26,19 @@ defined('ABSPATH') || exit;
  * - Fractional → decimal: n/d + 1. "evens", "evs" (any case) mean 1/1.
  * - American → decimal: +150 → 1 + 150/100; -200 → 1 + 100/200; ±100 → 2.00. Values strictly
  *   between -100 and +100 are invalid.
- * - Decimal → American: ≥ 2.0 → +round((d-1)·100); < 2.0 → -round(100/(d-1)).
+ * - Decimal → American: from the exact fraction n/d below, not from the rounded decimal:
+ *   n ≥ d → +round(100·n/d); n < d → -round(100·d/n). 1.17 (1/6) is -600, not -588.
  * - Decimal → fractional, in two steps:
  *   1. When the decimal is a standard UK bookmaker fraction rounded to two places (1.91 is
  *      10/11 = 1.909…, 1.67 is 4/6), that fraction is shown as bookmakers quote it, not reduced.
  *      This deliberately differs from the decimal by up to 0.005 (the rounding the decimal
- *      already carries).
+ *      already carries). The window is half-open, [fraction − 0.005, fraction + 0.005), so it
+ *      holds exactly one two-place decimal: 3.12 is 85/40 (3.125), 3.13 is not.
  *   2. Otherwise the best rational approximation with a denominator ≤ 100, reduced. This is
  *      exact for two-decimal prices (3.90 → 29/10).
- *   The same decimal always renders as the same fraction, so equal prices look equal.
+ *   The same decimal always renders as the same fraction, so equal prices look equal, and
+ *   different two-place decimals never render as the same fraction. Fractional and American
+ *   always come from the same fraction, so they agree (1.995 is 1/1 and +100).
  * - Invalid input throws InvalidArgumentException; callers drop the price or fall back.
  */
 final class OddsConverter
@@ -46,10 +50,17 @@ final class OddsConverter
      */
     private array $fractions = [];
 
+    /**
+     * American odds already rendered in this request, by decimal.
+     *
+     * @var array<string, string>
+     */
+    private array $americans = [];
+
     /** Largest denominator for fractions outside the standard ladder. */
     private const MAX_DENOMINATOR = 100;
 
-    /** A ladder fraction is used when the decimal is that fraction rounded to two places. */
+    /** A ladder fraction is used when the decimal is within this distance below it, or less above. */
     private const SNAP_TOLERANCE = 0.005;
 
     /**
@@ -97,24 +108,7 @@ final class OddsConverter
      */
     public function toFractional(float $decimal): string
     {
-        $profit = $this->assertDecimal($decimal) - 1.0;
-        $best   = null;
-        $error  = INF;
-
-        foreach (self::LADDER as [$numerator, $denominator]) {
-            $candidate = abs($numerator / $denominator - $profit);
-
-            if ($candidate < $error) {
-                $best  = [$numerator, $denominator];
-                $error = $candidate;
-            }
-        }
-
-        if ($best !== null && $error <= self::SNAP_TOLERANCE + 1e-9) {
-            return $best[0] . '/' . $best[1];
-        }
-
-        [$numerator, $denominator] = $this->approximate($profit);
+        [$numerator, $denominator] = $this->fraction($decimal);
 
         return $numerator . '/' . $denominator;
     }
@@ -122,17 +116,58 @@ final class OddsConverter
     /**
      * Decimal odds as American odds ("+150", "-200").
      *
+     * Computed from the exact fraction behind the price ({@see self::toFractional()}), not from
+     * the two-decimal rounding: 1.17 is 1/6, so -600 (100 × 6/1), not -588 (100 / 0.17).
+     * Rounding happens once, at the end.
+     *
      * @param float $decimal Decimal odds (> 1).
      * @return string
      * @throws InvalidArgumentException When the decimal odds are invalid.
      */
     public function toAmerican(float $decimal): string
     {
-        $profit = $this->assertDecimal($decimal) - 1.0;
+        [$numerator, $denominator] = $this->fraction($decimal);
 
-        return $profit >= 1.0
-            ? '+' . (int) round($profit * 100)
-            : '-' . (int) round(100 / $profit);
+        return $numerator >= $denominator
+            ? '+' . (int) round(100 * $numerator / $denominator)
+            : '-' . (int) round(100 * $denominator / $numerator);
+    }
+
+    /**
+     * Exact fraction (profit per unit stake) behind decimal odds: the standard fraction the
+     * decimal is a two-place rounding of (within {@see self::SNAP_TOLERANCE}), else the closest
+     * fraction with a denominator up to {@see self::MAX_DENOMINATOR}.
+     *
+     * @param float $decimal Decimal odds (> 1).
+     * @return array{int, int} [numerator, denominator]
+     * @throws InvalidArgumentException When the decimal odds are invalid.
+     */
+    private function fraction(float $decimal): array
+    {
+        $profit = $this->assertDecimal($decimal) - 1.0;
+        $best   = null;
+        $error  = INF;
+
+        $offset = 0.0;
+
+        foreach (self::LADDER as [$numerator, $denominator]) {
+            $candidate = abs($numerator / $denominator - $profit);
+
+            if ($candidate < $error) {
+                $best   = [$numerator, $denominator];
+                $error  = $candidate;
+                $offset = $profit - $numerator / $denominator;
+            }
+        }
+
+        // Half-open window [exact − 0.005, exact + 0.005): it holds exactly one two-place decimal,
+        // so two different prices never share a fraction (3.12 is 85/40; 3.13 is 213/100). The
+        // 1e-9 absorbs floating-point noise at the edges.
+        if ($best !== null && $offset >= -self::SNAP_TOLERANCE - 1e-9 && $offset < self::SNAP_TOLERANCE - 1e-9) {
+            return $best;
+        }
+
+        return $this->approximate($profit);
     }
 
     /**
@@ -152,7 +187,8 @@ final class OddsConverter
             OddsFormat::Decimal    => number_format($price->decimal, 2, '.', ''),
             OddsFormat::Fractional => $this->fractions[(string) $price->decimal]
                 ??= $this->toFractional($price->decimal),
-            OddsFormat::American   => $this->toAmerican($price->decimal),
+            OddsFormat::American   => $this->americans[(string) $price->decimal]
+                ??= $this->toAmerican($price->decimal),
         };
     }
 

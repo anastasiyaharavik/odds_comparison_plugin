@@ -4,7 +4,7 @@
  *   npm run test:e2e                      # local Docker site at http://localhost:8080
  *   WP_BASE_URL=… WP_CLI="wp --path=…" npm run test:e2e
  *
- * Global setup switches the site to Recorded mode with a temporary administrator and restores
+ * Global setup switches the site to Demo mode with a temporary administrator and restores
  * everything afterwards (see global-setup.js / global-teardown.js).
  */
 const { defineConfig, devices } = require( '@playwright/test' );

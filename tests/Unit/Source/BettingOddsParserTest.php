@@ -37,7 +37,7 @@ final class BettingOddsParserTest extends TestCase
 
     public function testListingYieldsPremierLeagueMatchesOnlyWithFullNames(): void
     {
-        $events = $this->parser->parseEvents(self::page('premier-league-listing.html'));
+        $events = $this->parser->parseEvents(self::page('premier-league-listing.txt'));
         $byName = array_column($events, null, 'name');
 
         self::assertGreaterThanOrEqual(10, count($events));
@@ -71,7 +71,7 @@ final class BettingOddsParserTest extends TestCase
 
     public function testMatchPagePricesAreScopedToTheEventAndMarket(): void
     {
-        $prices = $this->parser->parsePrices(self::page('match.html'), BettingOddsParser::MATCH_RESULT, self::MATCH);
+        $prices = $this->parser->parsePrices(self::page('match.txt'), BettingOddsParser::MATCH_RESULT, self::MATCH);
 
         self::assertSame([], $this->parser->warnings());
         self::assertSame(
@@ -96,7 +96,7 @@ final class BettingOddsParserTest extends TestCase
     public function testListingCarriesTheSameMatchResultGrid(): void
     {
         $fromListing = $this->parser->parsePrices(
-            self::page('premier-league-listing.html'),
+            self::page('premier-league-listing.txt'),
             BettingOddsParser::MATCH_RESULT,
             self::MATCH
         );
@@ -108,7 +108,7 @@ final class BettingOddsParserTest extends TestCase
     public function testUnavailablePricesArePassedThroughRaw(): void
     {
         $prices = $this->parser->parsePrices(
-            self::page('premier-league-listing.html'),
+            self::page('premier-league-listing.txt'),
             BettingOddsParser::MATCH_RESULT,
             self::MATCH
         );
@@ -119,7 +119,7 @@ final class BettingOddsParserTest extends TestCase
 
     public function testOutrightPage(): void
     {
-        $prices = $this->parser->parsePrices(self::page('premier-league-outright-winner.html'), 'Outright Winner');
+        $prices = $this->parser->parsePrices(self::page('premier-league-outright-winner.txt'), 'Outright Winner');
 
         self::assertSame([], $this->parser->warnings());
         self::assertGreaterThanOrEqual(20, count(array_unique(array_column($prices, 'participant'))));
@@ -129,7 +129,7 @@ final class BettingOddsParserTest extends TestCase
 
     public function testRelegationPageKeepsOnlyTheRequestedMarket(): void
     {
-        $page      = self::page('premier-league-relegation.html');
+        $page      = self::page('premier-league-relegation.txt');
         $relegated = $this->parser->parsePrices($page, 'To be Relegated');
         $stayUp    = $this->parser->parsePrices($page, 'To Stay Up');
 
@@ -140,7 +140,7 @@ final class BettingOddsParserTest extends TestCase
 
     public function testUtf8NamesSurvive(): void
     {
-        $page  = self::page('premier-league-top-goalscorer.html');
+        $page  = self::page('premier-league-top-goalscorer.txt');
         $names = array_column($this->parser->parsePrices($page, 'Top Goalscorer'), 'participant');
 
         self::assertContains('Erling Braut Haaland', $names);
@@ -152,7 +152,7 @@ final class BettingOddsParserTest extends TestCase
     public function testMarkupChangedPageReturnsEmptyWithWarning(): void
     {
         // A real page of the source without the main match list or the requested market.
-        $page = self::page('premier-league-stats-no-odds.html');
+        $page = self::page('premier-league-stats-no-odds.txt');
 
         self::assertSame([], $this->parser->parseEvents($page));
         self::assertStringContainsString('markup changed', $this->parser->warnings()[0] ?? '');

@@ -37,7 +37,14 @@ defined('ABSPATH') || exit;
 final class StatusPage implements HookableInterface
 {
     /** Result notices of admin actions (whitelist for the `oc_notice` query arg). */
-    private const ACTION_NOTICES = ['refresh_queued', 'refresh_waiting', 'cache_cleared', 'breaker_reset'];
+    private const ACTION_NOTICES = [
+        'refresh_queued',
+        'refresh_waiting',
+        'cache_cleared',
+        'breaker_reset',
+        'demo_enabled',
+        'demo_unavailable',
+    ];
 
     /**
      * @param Settings                $settings   Settings.
@@ -52,6 +59,7 @@ final class StatusPage implements HookableInterface
      * @param Logger                  $logger     Error log.
      * @param CronSchedule            $cron       Cron schedule.
      * @param BookmakerRegistry       $bookmakers Bookmaker registry (coverage names).
+     * @param bool                    $demoAvailable Whether Demo mode can be offered (recorded data present).
      */
     public function __construct(
         private readonly Settings $settings,
@@ -65,7 +73,8 @@ final class StatusPage implements HookableInterface
         private readonly Lock $lock,
         private readonly Logger $logger,
         private readonly CronSchedule $cron,
-        private readonly BookmakerRegistry $bookmakers
+        private readonly BookmakerRegistry $bookmakers,
+        private readonly bool $demoAvailable = true
     ) {
     }
 
@@ -118,8 +127,16 @@ final class StatusPage implements HookableInterface
                     'Circuit breakers were reset; requests to the sources are allowed again.',
                     'odds-comparison'
                 ),
+                'demo_enabled'    => __(
+                    'Demo data is on. Odds tables fill within a minute; reload this tab to see the result.',
+                    'odds-comparison'
+                ),
+                'demo_unavailable' => __(
+                    'Demo data could not be turned on; see the message above.',
+                    'odds-comparison'
+                ),
             ];
-            $this->notice('success', $messages[$notice]);
+            $this->notice($notice === 'demo_unavailable' ? 'error' : 'success', $messages[$notice]);
         }
 
         $this->renderWarnings();
@@ -198,10 +215,10 @@ final class StatusPage implements HookableInterface
         $health = $this->status->source($source);
         $state  = $this->breaker->state($this->host($source));
         $fresh  = $health['lastSuccess'] > 0
-            && time() - $health['lastSuccess'] <= $this->settings->cacheTtl()['stale_after'] * 60;
+            && time() - $health['lastSuccess'] <= $this->settings->staleAfterFor($source) * 60;
 
         [$tone, $label] = match (true) {
-            $this->settings->dataMode() === 'recorded'  => ['warn', __('Recorded data', 'odds-comparison')],
+            $this->settings->isDemo()                   => ['warn', __('Demo data', 'odds-comparison')],
             $state['state'] === CircuitBreaker::OPEN    => ['bad', __('Paused', 'odds-comparison')],
             $fresh                                      => ['ok', __('Live', 'odds-comparison')],
             $health['lastSuccess'] === 0                => ['warn', __('Waiting for first fetch', 'odds-comparison')],
@@ -472,12 +489,20 @@ final class StatusPage implements HookableInterface
         echo '</tr></thead><tbody>';
 
         foreach ($entries as $entry) {
+            $count   = (int) ($entry['count'] ?? 1);
+            $message = (string) ($entry['message'] ?? '');
+
+            if ($count > 1) {
+                /* translators: 1: log message, 2: how many times it occurred in a row. */
+                $message = sprintf(__('%1$s (×%2$d)', 'odds-comparison'), $message, $count);
+            }
+
             printf(
                 '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
                 esc_html($this->ago((int) ($entry['time'] ?? 0))),
                 esc_html((string) ($entry['level'] ?? '')),
                 esc_html((string) ($entry['source'] ?? '')),
-                esc_html((string) ($entry['message'] ?? ''))
+                esc_html($message)
             );
         }
 
@@ -485,7 +510,8 @@ final class StatusPage implements HookableInterface
     }
 
     /**
-     * Warnings: Recorded mode on, active source paused, robots disallow, no recent success.
+     * Warnings: Demo mode on (with how to go live), active source failing (with a "Use demo
+     * data" button), paused, robots disallow, no recent success.
      *
      * @return void
      */
@@ -495,17 +521,24 @@ final class StatusPage implements HookableInterface
         $health = $this->status->source($source);
         $state  = $this->breaker->state($this->host($source));
 
-        if ($this->settings->dataMode() === 'recorded') {
-            $this->notice(
-                'warning',
-                // phpcs:ignore Generic.Files.LineLength.TooLong -- translatable sentence must stay one literal.
-                __('Odds Comparison is in Recorded mode: visitors see recorded data, not live odds. Switch to Live on the General tab.', 'odds-comparison')
-            );
+        if ($this->settings->isDemo()) {
+            $this->notice('info', implode(' ', [
+                __('Odds Comparison shows demo data: real odds recorded from the data source, with kick-off dates moved to the coming days.', 'odds-comparison'), // phpcs:ignore Generic.Files.LineLength.TooLong
+                self::goLiveHint(),
+            ]));
 
             return;
         }
 
-        if ($state['state'] === CircuitBreaker::OPEN) {
+        $failing = $state['state'] === CircuitBreaker::OPEN
+            || ($health['lastErrorAt'] > 0 && $health['lastErrorAt'] >= $health['lastSuccess']);
+
+        if ($failing && $this->demoAvailable) {
+            $this->demoOffer(
+                $source,
+                $state['state'] === CircuitBreaker::OPEN ? $state['lastError'] : $health['lastError']
+            );
+        } elseif ($state['state'] === CircuitBreaker::OPEN) {
             $this->notice('error', sprintf(
                 /* translators: 1: source id, 2: last error. */
                 __('Odds Comparison: requests to %1$s are paused after repeated failures (%2$s). Cached odds are still shown.', 'odds-comparison'), // phpcs:ignore Generic.Files.LineLength.TooLong
@@ -517,21 +550,66 @@ final class StatusPage implements HookableInterface
         if ($health['robots']['allowed'] === false) {
             $this->notice('warning', sprintf(
                 /* translators: 1: source id, 2: details. */
-                __('Odds Comparison: robots.txt of %1$s disallows paths the plugin uses. %2$s', 'odds-comparison'),
+                __('Odds Comparison: robots.txt of %1$s disallows paths the plugin uses; they are not requested and their odds are not updated. %2$s', 'odds-comparison'), // phpcs:ignore Generic.Files.LineLength.TooLong
                 $source,
                 $health['robots']['detail']
             ));
         }
 
-        $staleSeconds = $this->settings->cacheTtl()['stale_after'] * 60;
+        $staleSeconds = $this->settings->staleAfterFor($source) * 60;
 
-        if ($this->tracked->pairs() !== [] && time() - $health['lastSuccess'] > $staleSeconds) {
+        if (!$failing && $this->tracked->pairs() !== [] && time() - $health['lastSuccess'] > $staleSeconds) {
             $this->notice('warning', sprintf(
                 /* translators: %s: source id. */
                 __('Odds Comparison: no successful fetch from %s recently. Check the Status tab.', 'odds-comparison'),
                 $source
             ));
         }
+    }
+
+    /**
+     * Error notice for a data source that returns no odds, with what to do and a button that
+     * turns on demo data.
+     *
+     * @param string $source    Active source id.
+     * @param string $lastError Last error message (already redacted).
+     * @return void
+     */
+    private function demoOffer(string $source, string $lastError): void
+    {
+        printf(
+            '<div class="notice notice-error"><p><strong>%1$s</strong> %2$s</p><p>%3$s</p>'
+            . '<form method="post" action="%4$s"><input type="hidden" name="action" value="%5$s" />',
+            esc_html(sprintf(
+                /* translators: %s: data source name. */
+                __('Odds Comparison: no odds can be fetched from %s, so there are none to show.', 'odds-comparison'),
+                SourceLabels::short($source)
+            )),
+            esc_html($lastError),
+            esc_html(implode(' ', [
+                self::goLiveHint(),
+                __('Until then you can show demo data: real recorded odds with kick-off dates moved to the coming days, marked "Demo data".', 'odds-comparison'), // phpcs:ignore Generic.Files.LineLength.TooLong
+            ])),
+            esc_url(admin_url('admin-post.php')),
+            esc_attr(AdminActions::USE_DEMO)
+        );
+        wp_nonce_field(AdminActions::USE_DEMO);
+        printf(
+            '<p><button type="submit" class="button button-primary">%s</button></p></form></div>',
+            esc_html__('Use demo data', 'odds-comparison')
+        );
+    }
+
+    /**
+     * What it takes to show live odds (same text in the demo notice and the failure notice).
+     *
+     * @return string Plain text.
+     */
+    private static function goLiveHint(): string
+    {
+        return Plugin::theOddsApiKey() !== ''
+            ? __('For live odds, choose The Odds API as the data source and set Data mode to Live (Odds Comparison → General).', 'odds-comparison') // phpcs:ignore Generic.Files.LineLength.TooLong
+            : __('For live odds, get a free key from the-odds-api.com, add define( \'ODDS_COMPARISON_THEODDSAPI_KEY\', \'your-key\' ); to wp-config.php, then choose The Odds API as the data source and set Data mode to Live (Odds Comparison → General). BettingOdds.com blocks requests from most web servers.', 'odds-comparison'); // phpcs:ignore Generic.Files.LineLength.TooLong
     }
 
     /**

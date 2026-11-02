@@ -7,22 +7,22 @@
  *
  * On narrow blocks the stylesheet shows the best price per selection first; this script collapses
  * the full table behind a "Compare all" button. Without JS the full table stays visible.
+ *
+ * Tables added to the page later (AJAX navigation, infinite scroll, "load more") are set up as
+ * they appear, through a MutationObserver. Each table is set up once (data-oc-ready). Themes that
+ * insert tables in other ways can call window.oddsComparison.init( element ).
  */
 const STORAGE_KEY = 'oddsComparisonFormat';
 const ATTRIBUTE = { fractional: 'frac', decimal: 'dec', american: 'us' };
-
-const switchers = () =>
-	document.querySelectorAll( '[data-oc-table] [data-oc-format-switcher]' );
+const TABLE = '[data-oc-table]';
 
 /**
  * Show one table's prices in a format.
  *
- * @param {HTMLSelectElement} switcher Table's format select.
- * @param {string}            format   fractional|decimal|american.
+ * @param {HTMLElement} table  Table root ([data-oc-table]).
+ * @param {string}      format fractional|decimal|american.
  */
-function apply( switcher, format ) {
-	const table = switcher.closest( '[data-oc-table]' );
-
+function apply( table, format ) {
 	table.querySelectorAll( '.oc-odds__value' ).forEach( ( value ) => {
 		const text = value.dataset[ ATTRIBUTE[ format ] ];
 
@@ -32,7 +32,12 @@ function apply( switcher, format ) {
 	} );
 
 	table.dataset.format = format;
-	switcher.value = format;
+
+	const switcher = table.querySelector( '[data-oc-format-switcher]' );
+
+	if ( switcher ) {
+		switcher.value = format;
+	}
 }
 
 /**
@@ -48,37 +53,51 @@ function stored() {
 	}
 }
 
-switchers().forEach( ( switcher ) => {
-	switcher.closest( '.oc-odds__switcher' ).hidden = false;
-
-	const saved = stored();
-
-	if ( ATTRIBUTE[ saved ] ) {
-		apply( switcher, saved );
+/**
+ * Set up one table: format switcher and the "Compare all" toggle. Runs once per table.
+ *
+ * @param {HTMLElement} table Table root ([data-oc-table]).
+ */
+function setUp( table ) {
+	if ( table.dataset.ocReady ) {
+		return;
 	}
 
-	switcher.addEventListener( 'change', () => {
-		const format = switcher.value;
+	table.dataset.ocReady = '1';
 
-		if ( ! ATTRIBUTE[ format ] ) {
-			return;
+	const switcher = table.querySelector( '[data-oc-format-switcher]' );
+
+	if ( switcher ) {
+		switcher.closest( '.oc-odds__switcher' ).hidden = false;
+
+		const saved = stored();
+
+		if ( ATTRIBUTE[ saved ] ) {
+			apply( table, saved );
 		}
 
-		switchers().forEach( ( other ) => apply( other, format ) );
+		switcher.addEventListener( 'change', () => {
+			const format = switcher.value;
 
-		try {
-			window.localStorage.setItem( STORAGE_KEY, format );
-		} catch ( error ) {
-			// Preference is not kept; switching still works on this page.
-		}
-	} );
-} );
+			if ( ! ATTRIBUTE[ format ] ) {
+				return;
+			}
 
-document
-	.querySelectorAll( '[data-oc-table] .oc-odds__more' )
-	.forEach( ( button ) => {
-		const table = button.closest( '[data-oc-table]' );
+			document
+				.querySelectorAll( TABLE )
+				.forEach( ( other ) => apply( other, format ) );
 
+			try {
+				window.localStorage.setItem( STORAGE_KEY, format );
+			} catch ( error ) {
+				// Preference is not kept; switching still works on this page.
+			}
+		} );
+	}
+
+	const button = table.querySelector( '.oc-odds__more' );
+
+	if ( button ) {
 		/**
 		 * Show or hide the full table.
 		 *
@@ -96,4 +115,34 @@ document
 		button.addEventListener( 'click', () =>
 			toggle( button.getAttribute( 'aria-expanded' ) !== 'true' )
 		);
-	} );
+	}
+}
+
+/**
+ * Set up every table in (or being) an element.
+ *
+ * @param {Element|Document} root Element or document.
+ */
+function init( root = document ) {
+	if ( root instanceof window.Element && root.matches( TABLE ) ) {
+		setUp( root );
+	}
+
+	root.querySelectorAll( TABLE ).forEach( setUp );
+}
+
+init();
+
+window.oddsComparison = { init };
+
+if ( 'MutationObserver' in window && document.body ) {
+	new window.MutationObserver( ( mutations ) => {
+		mutations.forEach( ( mutation ) =>
+			mutation.addedNodes.forEach( ( node ) => {
+				if ( node instanceof window.Element ) {
+					init( node );
+				}
+			} )
+		);
+	} ).observe( document.body, { childList: true, subtree: true } );
+}

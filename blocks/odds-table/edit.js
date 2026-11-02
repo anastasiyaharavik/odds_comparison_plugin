@@ -127,6 +127,7 @@ export default function Edit( { attributes, setAttributes } ) {
 		caption,
 	} = attributes;
 	const instanceId = useInstanceId( Edit, 'oc-odds-edit' );
+	const trackedPair = useRef( '' );
 	const [ search, setSearch ] = useState( '' );
 	const [ toAdd, setToAdd ] = useState( '' );
 	const pendingFocus = useRef( null );
@@ -188,16 +189,30 @@ export default function Edit( { attributes, setAttributes } ) {
 		}
 	}, [ markets.data ] ); // eslint-disable-line react-hooks/exhaustive-deps
 
-	// Track the pair so the background refresh fetches it for the preview.
+	// Track the pair so the background refresh fetches it for the preview. Only once the market
+	// list of this event has loaded and contains the market: right after the event changes, the
+	// old market may not fit it (e.g. Match Result for an outrights event) until it is corrected.
+	const marketFits =
+		! markets.loading &&
+		( markets.data || [] ).some( ( market ) => market.key === marketKey );
+
 	useEffect( () => {
-		if ( eventId && marketKey ) {
+		const pair = `${ eventId }|${ marketKey }`;
+
+		if (
+			eventId &&
+			marketKey &&
+			marketFits &&
+			trackedPair.current !== pair
+		) {
+			trackedPair.current = pair;
 			apiFetch( {
 				path: `${ NAMESPACE }/track`,
 				method: 'POST',
 				data: { eventId, marketKey },
 			} ).catch( () => {} );
 		}
-	}, [ eventId, marketKey ] );
+	}, [ eventId, marketKey, marketFits ] );
 
 	// Restore keyboard focus after the bookmaker list changed.
 	useEffect( () => {
@@ -262,6 +277,9 @@ export default function Edit( { attributes, setAttributes } ) {
 		value: event.id,
 		label: event.label,
 	} ) );
+	const currentEvent = ( events.data || [] ).find(
+		( event ) => event.id === eventId
+	);
 
 	const inspector = (
 		<InspectorControls>
@@ -285,10 +303,18 @@ export default function Edit( { attributes, setAttributes } ) {
 					}
 				/>
 				<RequestState request={ events } />
+				{ currentEvent?.started && (
+					<Notice status="warning" isDismissible={ false }>
+						{ __(
+							'This match has started, so the block shows a notice instead of odds. Choose an upcoming event to show prices again.',
+							'odds-comparison'
+						) }
+					</Notice>
+				) }
 				{ events.data && events.data.length === 0 && ! search && (
 					<Notice status="warning" isDismissible={ false }>
 						{ __(
-							'No upcoming events yet. Enable competitions under Odds Comparison → General and wait for the next refresh.',
+							'No upcoming events yet. Events appear within a minute or two of the first refresh. If this list stays empty, open Odds Comparison → Status: it shows whether the data source responds and can switch to demo data.',
 							'odds-comparison'
 						) }
 					</Notice>

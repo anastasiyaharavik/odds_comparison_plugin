@@ -10,6 +10,7 @@ declare(strict_types=1);
 
 namespace OddsComparison\Storage;
 
+use DateTimeImmutable;
 use DateTimeInterface;
 use InvalidArgumentException;
 use OddsComparison\Domain\Event;
@@ -22,12 +23,18 @@ defined('ABSPATH') || exit;
  * The editor's event picker and render-time validation read it, and nothing
  * here scrapes.
  *
- * Discovery replaces one (source, competition) slice at a time, so events no longer listed
- * disappear. Matches that have started are pruned. The size is bounded by enabled competitions
- * × listed matches. Per site on multisite.
+ * Discovery replaces one (source, competition) slice at a time, so upcoming events no longer
+ * listed disappear. A match that has started stays for {@see self::STARTED_RETENTION} seconds
+ * (even when the source stops listing it), so blocks showing it say "This event has started"
+ * instead of going blank; it is never offered as upcoming ({@see self::search()}). The size is
+ * bounded by enabled competitions × matches listed or played in the retention window. Per site
+ * on multisite.
  */
 final class EventIndex
 {
+    /** Seconds a started match is kept after kick-off (7 days). */
+    public const STARTED_RETENTION = 7 * 86400;
+
     /**
      * Loaded events by id, or null before the first read.
      *
@@ -36,7 +43,10 @@ final class EventIndex
     private ?array $events = null;
 
     /**
-     * Replace the events of one competition on one source, dropping started matches.
+     * Replace the events of one competition on one source.
+     *
+     * Upcoming events of the slice that are no longer listed are dropped. Started matches of the
+     * slice are kept until {@see self::STARTED_RETENTION} after kick-off, listed or not.
      *
      * @param string            $sourceId    Source id.
      * @param string            $competition Competition slug.
@@ -46,22 +56,24 @@ final class EventIndex
      */
     public function replace(string $sourceId, string $competition, array $events, DateTimeInterface $now): void
     {
-        $all = array_filter(
+        $inSlice = static fn (Event $event): bool => $event->sourceId === $sourceId
+            && $event->competition === $competition;
+        $all     = array_filter(
             $this->all(),
-            static fn (Event $event): bool => $event->sourceId !== $sourceId || $event->competition !== $competition
+            static fn (Event $event): bool => !$inSlice($event) || $event->hasStarted($now)
         );
 
         foreach ($events as $event) {
-            if ($event->sourceId === $sourceId && $event->competition === $competition && !$event->hasStarted($now)) {
+            if ($inSlice($event)) {
                 $all[$event->id] = $event;
             }
         }
 
-        $this->store($all);
+        $this->store(array_filter($all, static fn (Event $event): bool => !self::expired($event, $now)));
     }
 
     /**
-     * Drop matches that have started.
+     * Drop matches that started more than {@see self::STARTED_RETENTION} ago.
      *
      * @param DateTimeInterface $now Current time.
      * @return int Number of events removed.
@@ -69,13 +81,42 @@ final class EventIndex
     public function prune(DateTimeInterface $now): int
     {
         $all  = $this->all();
-        $kept = array_filter($all, static fn (Event $event): bool => !$event->hasStarted($now));
+        $kept = array_filter($all, static fn (Event $event): bool => !self::expired($event, $now));
 
         if (count($kept) !== count($all)) {
             $this->store($kept);
         }
 
         return count($all) - count($kept);
+    }
+
+    /**
+     * Upcoming (not started) matches of one competition on one source.
+     *
+     * @param string            $sourceId    Source id.
+     * @param string            $competition Competition slug.
+     * @param DateTimeInterface $now         Current time.
+     * @return int
+     */
+    public function upcomingMatchCount(string $sourceId, string $competition, DateTimeInterface $now): int
+    {
+        return count(array_filter(
+            $this->all(),
+            static fn (Event $event): bool => $event->sourceId === $sourceId
+                && $event->competition === $competition
+                && !$event->isOutright()
+                && !$event->hasStarted($now)
+        ));
+    }
+
+    /**
+     * Forget every event (data mode switch); the next discovery fills the index again.
+     *
+     * @return void
+     */
+    public function clear(): void
+    {
+        $this->store([]);
     }
 
     /**
@@ -91,19 +132,26 @@ final class EventIndex
 
     /**
      * Upcoming events of a source, filtered by a case-insensitive name search, soonest first
-     * (outrights last).
+     * (outrights last). Started matches are left out before the limit applies.
      *
-     * @param string $sourceId Source id.
-     * @param string $search   Search text ("" for all).
-     * @param int    $limit    Maximum results.
+     * @param string                 $sourceId Source id.
+     * @param string                 $search   Search text ("" for all).
+     * @param int                    $limit    Maximum results.
+     * @param DateTimeInterface|null $now      Current time (null: the real time).
      * @return list<Event>
      */
-    public function search(string $sourceId, string $search = '', int $limit = 50): array
-    {
+    public function search(
+        string $sourceId,
+        string $search = '',
+        int $limit = 50,
+        ?DateTimeInterface $now = null
+    ): array {
+        $now   ??= new DateTimeImmutable();
         $needle  = mb_strtolower(trim($search));
         $matches = array_filter(
             $this->all(),
             static fn (Event $event): bool => $event->sourceId === $sourceId
+                && !$event->hasStarted($now)
                 && ($needle === '' || str_contains(mb_strtolower($event->name), $needle))
         );
 
@@ -138,6 +186,19 @@ final class EventIndex
         }
 
         return $this->events;
+    }
+
+    /**
+     * Whether a match started more than {@see self::STARTED_RETENTION} ago.
+     *
+     * @param Event             $event Event.
+     * @param DateTimeInterface $now   Current time.
+     * @return bool
+     */
+    private static function expired(Event $event, DateTimeInterface $now): bool
+    {
+        return $event->startsAt !== null
+            && $now->getTimestamp() - $event->startsAt->getTimestamp() > self::STARTED_RETENTION;
     }
 
     /**

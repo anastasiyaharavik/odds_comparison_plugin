@@ -74,14 +74,14 @@ final class SourceFactory
         $definitions = $this->definitions();
 
         if (!array_key_exists($id, $definitions)) {
-            throw new InvalidArgumentException(sprintf('Unknown odds source "%s".', esc_html($id)));
+            throw new InvalidArgumentException(sprintf('Unknown odds source "%s".', $id));
         }
 
         $source = $this->build($definitions[$id]);
 
         if ($source->id() !== $id) {
             throw new InvalidArgumentException(
-                sprintf('Source registered as "%s" reports id "%s".', esc_html($id), esc_html($source->id()))
+                sprintf('Source registered as "%s" reports id "%s".', $id, $source->id())
             );
         }
 

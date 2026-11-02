@@ -408,7 +408,7 @@ final class HttpLayerTest extends TestCase
 
         self::assertSame(200, $response->status);
         self::assertSame(
-            hash_file('sha256', $fixtures . '/bettingodds/premier-league-listing.html'),
+            hash_file('sha256', $fixtures . '/bettingodds/premier-league-listing.txt'),
             hash('sha256', $response->body)
         );
         self::assertNotNull($client->capturedAt(self::URL));

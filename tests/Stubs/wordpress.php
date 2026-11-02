@@ -107,13 +107,26 @@ if (!class_exists('WP_Error')) {
     // phpcs:ignore PSR1.Classes.ClassDeclaration.MissingNamespace, Squiz.Classes.ValidClassName.NotCamelCaps
     class WP_Error
     {
-        public function __construct(private string $code = '', private string $message = '')
-        {
+        public function __construct(
+            private string $code = '',
+            private string $message = '',
+            private mixed $data = null
+        ) {
         }
 
         public function get_error_message(): string // phpcs:ignore PSR1.Methods.CamelCapsMethodName
         {
             return $this->message;
+        }
+
+        public function get_error_code(): string // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+        {
+            return $this->code;
+        }
+
+        public function get_error_data(): mixed // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+        {
+            return $this->data;
         }
     }
 }
@@ -357,6 +370,136 @@ if (!function_exists('wp_cache_set')) {
         $GLOBALS['odds_comparison_test_cache'][$group][$key] = $data;
 
         return true;
+    }
+}
+
+$GLOBALS['odds_comparison_test_cron'] = [];
+
+if (!function_exists('wp_next_scheduled')) {
+    function wp_next_scheduled(string $hook, array $args = []): int|false
+    {
+        foreach ($GLOBALS['odds_comparison_test_cron'] as $event) {
+            if ($event['hook'] === $hook && $event['args'] === $args) {
+                return $event['timestamp'];
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('wp_schedule_single_event')) {
+    function wp_schedule_single_event(int $timestamp, string $hook, array $args = []): bool
+    {
+        $GLOBALS['odds_comparison_test_cron'][] = ['timestamp' => $timestamp, 'hook' => $hook, 'args' => $args];
+
+        return true;
+    }
+}
+
+if (!function_exists('wp_unschedule_hook')) {
+    function wp_unschedule_hook(string $hook): int
+    {
+        $before                               = count($GLOBALS['odds_comparison_test_cron']);
+        $GLOBALS['odds_comparison_test_cron'] = array_values(array_filter(
+            $GLOBALS['odds_comparison_test_cron'],
+            static fn (array $event): bool => $event['hook'] !== $hook
+        ));
+
+        return $before - count($GLOBALS['odds_comparison_test_cron']);
+    }
+}
+
+if (!function_exists('is_multisite')) {
+    function is_multisite(): bool
+    {
+        return false;
+    }
+}
+
+if (!function_exists('spawn_cron')) {
+    function spawn_cron(): void
+    {
+    }
+}
+
+$GLOBALS['odds_comparison_test_can'] = true;
+
+if (!function_exists('current_user_can')) {
+    function current_user_can(string $capability, mixed ...$args): bool
+    {
+        return (bool) $GLOBALS['odds_comparison_test_can'];
+    }
+}
+
+if (!class_exists('WP_REST_Request')) {
+    /**
+     * Minimal REST request: route and parameters (array access, as in WordPress).
+     *
+     * @implements ArrayAccess<string, mixed>
+     */
+    // phpcs:ignore PSR1.Classes.ClassDeclaration.MultipleClasses, PSR1.Classes.ClassDeclaration.MissingNamespace, Squiz.Classes.ValidClassName.NotCamelCaps
+    class WP_REST_Request implements ArrayAccess
+    {
+        /** @var array<string, mixed> */
+        private array $params = [];
+
+        public function __construct(private string $method = 'GET', private string $route = '')
+        {
+        }
+
+        public function get_route(): string // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+        {
+            return $this->route;
+        }
+
+        public function set_param(string $key, mixed $value): void // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+        {
+            $this->params[$key] = $value;
+        }
+
+        public function offsetExists(mixed $offset): bool
+        {
+            return isset($this->params[$offset]);
+        }
+
+        public function offsetGet(mixed $offset): mixed
+        {
+            return $this->params[$offset] ?? null;
+        }
+
+        public function offsetSet(mixed $offset, mixed $value): void
+        {
+            $this->params[(string) $offset] = $value;
+        }
+
+        public function offsetUnset(mixed $offset): void
+        {
+            unset($this->params[$offset]);
+        }
+    }
+}
+
+if (!class_exists('WP_REST_Response')) {
+    /**
+     * Minimal REST response.
+     */
+    // phpcs:ignore PSR1.Classes.ClassDeclaration.MultipleClasses, PSR1.Classes.ClassDeclaration.MissingNamespace, Squiz.Classes.ValidClassName.NotCamelCaps
+    class WP_REST_Response
+    {
+        public function __construct(private mixed $data = null, private int $status = 200)
+        {
+        }
+
+        public function get_data(): mixed // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+        {
+            return $this->data;
+        }
+
+        public function get_status(): int // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+        {
+            return $this->status;
+        }
     }
 }
 

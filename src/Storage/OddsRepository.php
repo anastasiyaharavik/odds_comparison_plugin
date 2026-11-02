@@ -49,8 +49,9 @@ final class OddsRepository implements OddsRepositoryInterface
     private readonly Closure $clock;
 
     /**
-     * @param Closure      $staleAfterMinutes fn(): int; minutes before odds count as stale.
-     * @param Closure|null $clock             fn(): int; current Unix time (Recorded mode, tests).
+     * @param Closure      $staleAfterMinutes fn(string $sourceId): int; minutes before a source's odds
+     *                                       count as stale.
+     * @param Closure|null $clock             fn(): int; current Unix time (tests).
      */
     public function __construct(Closure $staleAfterMinutes, ?Closure $clock = null)
     {
@@ -119,7 +120,7 @@ final class OddsRepository implements OddsRepositoryInterface
     {
         $age = ($this->clock)() - $odds->fetchedAt->getTimestamp();
 
-        return $age > max(1, ($this->staleAfterMinutes)()) * 60;
+        return $age > max(1, (int) ($this->staleAfterMinutes)($odds->sourceId)) * 60;
     }
 
     /**

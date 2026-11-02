@@ -16,7 +16,7 @@ use OddsComparison\Http\HttpResponse;
 defined('ABSPATH') || exit;
 
 /**
- * Fetches a URL (Strategy: live WordPress HTTP API vs recorded responses, chosen by `data_mode`).
+ * Fetches a URL (Strategy: live WordPress HTTP API or recorded responses in Demo mode, chosen by `data_mode`).
  *
  * Implementations own transport concerns: timeouts, response size cap, retries, throttling and
  * the circuit breaker. Sources only see a successful response or an exception.

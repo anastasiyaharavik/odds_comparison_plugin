@@ -1,10 +1,10 @@
-# Excluded from the release zip (wp dist-archive). vendor/ (no-dev) and build/ ARE shipped.
+# Excluded from the release zip (wp dist-archive). vendor/ (no-dev), build/ and fixtures/
+# (the recorded responses behind Demo mode) ARE shipped.
 /.git
 /.github
 /node_modules
 /blocks
 /tests
-/fixtures
 /docs
 /.phpunit.cache
 /test-results

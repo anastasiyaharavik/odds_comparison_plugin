@@ -12,6 +12,7 @@ namespace OddsComparison\Lifecycle;
 
 use OddsComparison\Contracts\HookableInterface;
 use OddsComparison\Scheduler\CronSchedule;
+use OddsComparison\Scheduler\RefreshScheduler;
 use OddsComparison\Settings\Settings;
 use OddsComparison\Support\OptionKeys;
 use WP_Site;
@@ -60,6 +61,8 @@ final class Installer implements HookableInterface
             $this->settings->installDefaults();
             $this->cronSchedule->schedule($this->settings->refreshInterval());
             update_option(OptionKeys::VERSION, $this->version, true);
+            // First refresh right away, so a new install (Demo mode) has odds within a minute.
+            RefreshScheduler::scheduleManualRun();
         });
     }
 
@@ -72,7 +75,7 @@ final class Installer implements HookableInterface
     public function deactivate(bool $networkWide): void
     {
         $this->forEachSite($networkWide, function (): void {
-            $this->cronSchedule->unschedule();
+            $this->cronSchedule->unscheduleAll();
             delete_option(OptionKeys::LOCK);
         });
     }

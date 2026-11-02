@@ -126,6 +126,18 @@ final class CronSchedule implements HookableInterface
     }
 
     /**
+     * Remove every event of the refresh hook: the recurring one and queued manual runs
+     * (`['manual']` arguments, which wp_clear_scheduled_hook() without arguments misses).
+     * Used on deactivation and uninstall.
+     *
+     * @return void
+     */
+    public function unscheduleAll(): void
+    {
+        wp_unschedule_hook(self::HOOK);
+    }
+
+    /**
      * Timestamp of the next scheduled run, or null when not scheduled.
      *
      * @return int|null

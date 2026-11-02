@@ -16,7 +16,7 @@
     <arg name="parallel" value="8"/>
     <arg value="sp"/>
 
-    <config name="minimum_wp_version" value="6.5"/>
+    <config name="minimum_wp_version" value="6.7"/>
 
     <!-- Base standard. -->
     <rule ref="PSR12">
@@ -56,14 +56,15 @@
     </rule>
 
     <!--
-        src/Domain and src/Odds are pure PHP (no WordPress functions), so they can be unit-tested and reused.
-        Their exception messages are developer diagnostics, never echoed raw: anything that shows
-        them (admin status log, notices) escapes at output time. wp_parse_url() is
-        only a wrapper for parse_url() and is not available there.
+        Exception messages are plain-text diagnostics, never echoed raw: the error log, the Status
+        tab and admin notices escape them at output time. Escaping them when they are created
+        escaped them twice ("Brighton &amp; Hove" shown as "Brighton &amp;amp; Hove"), so this sniff
+        is off for the whole plugin. src/Domain and src/Odds are pure PHP (no WordPress functions),
+        so they can be unit-tested and reused; wp_parse_url() is only a wrapper for parse_url()
+        and is not available there.
     -->
-    <rule ref="WordPress.Security.EscapeOutput.ExceptionNotEscaped">
-        <exclude-pattern>/src/Domain/*</exclude-pattern>
-        <exclude-pattern>/src/Odds/*</exclude-pattern>
+    <rule ref="WordPress.Security.EscapeOutput">
+        <exclude name="WordPress.Security.EscapeOutput.ExceptionNotEscaped"/>
     </rule>
     <rule ref="WordPress.WP.AlternativeFunctions.parse_url_parse_url">
         <exclude-pattern>/src/Domain/*</exclude-pattern>

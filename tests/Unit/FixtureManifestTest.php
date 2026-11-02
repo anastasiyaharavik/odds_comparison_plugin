@@ -64,7 +64,7 @@ final class FixtureManifestTest extends TestCase
             self::markTestSkipped('No recorded BettingOdds pages in fixtures/.');
         }
 
-        $match    = (string) file_get_contents($dir . 'match.html');
+        $match    = (string) file_get_contents($dir . 'match.txt');
         $config   = self::ROOT . 'config/';
         $missing  = [];
 
@@ -83,7 +83,7 @@ final class FixtureManifestTest extends TestCase
         self::assertStringContainsString('data-marketname="Match Result"', $match);
 
         foreach ($league->outrightMarketKeys('bettingodds') as $marketKey) {
-            $page = (string) file_get_contents($dir . 'premier-league-' . $marketKey . '.html');
+            $page = (string) file_get_contents($dir . 'premier-league-' . $marketKey . '.txt');
             $name = (string) $markets->get($marketKey)?->sourceName('bettingodds');
 
             self::assertStringContainsString('data-marketname="' . $name . '"', $page, $marketKey);

@@ -5,16 +5,18 @@
  *
  * Available variables (provided by WordPress): $attributes, $content, $block.
  * Thin wrapper: all logic lives in OddsComparison\Block\TableRenderer.
- * The editor preview (ServerSideRender) arrives as a REST request.
+ * Editor hints only for the editor preview (the block-renderer REST route, see PreviewContext);
+ * every other request, REST included, gets the visitor output.
  *
  * @package OddsComparison
  */
 
 defined('ABSPATH') || exit;
 
-$oc_html = OddsComparison\Plugin::instance()->tableRenderer()->render(
+$oc_plugin = OddsComparison\Plugin::instance();
+$oc_html   = $oc_plugin->tableRenderer()->render(
     (array) $attributes,
-    wp_is_serving_rest_request(),
+    $oc_plugin->previewContext()->isPreview(),
     get_block_wrapper_attributes(['class' => 'oc-odds'])
 );
 

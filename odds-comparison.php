@@ -4,7 +4,7 @@
  * Plugin Name:       Odds Comparison
  * Description:       Compares live odds from multiple bookmakers in a cached Gutenberg block.
  * Version:           0.1.0
- * Requires at least: 6.5
+ * Requires at least: 6.7
  * Requires PHP:      8.1
  * Author:            Anastasiya Haravik
  * License:           GPL-2.0-or-later
@@ -22,7 +22,7 @@ defined('ABSPATH') || exit;
 
 define('ODDS_COMPARISON_FILE', __FILE__);
 define('ODDS_COMPARISON_MIN_PHP', '8.1');
-define('ODDS_COMPARISON_MIN_WP', '6.5');
+define('ODDS_COMPARISON_MIN_WP', '6.7');
 
 /**
  * Whether the current environment satisfies the plugin's minimum requirements.

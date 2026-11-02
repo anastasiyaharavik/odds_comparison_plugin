@@ -57,6 +57,18 @@ final class SourceFactoryTest extends TestCase
         (new SourceFactory())->make('nope');
     }
 
+    public function testExceptionMessagesArePlainTextNotEscaped(): void
+    {
+        // Messages are escaped where they are shown (Status tab); escaping them here too turned
+        // "Brighton & Hove" into "Brighton &amp;amp; Hove" on screen.
+        try {
+            (new SourceFactory())->make('brighton&hove');
+            self::fail('Expected an exception.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('Unknown odds source "brighton&hove".', $exception->getMessage());
+        }
+    }
+
     public function testInvalidDefinitionThrows(): void
     {
         $this->expectException(InvalidArgumentException::class);

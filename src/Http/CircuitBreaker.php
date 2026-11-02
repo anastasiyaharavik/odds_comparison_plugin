@@ -141,7 +141,7 @@ final class CircuitBreaker
      */
     public function state(string $key): array
     {
-        $stored = get_transient($this->transientKey($key));
+        $stored = get_transient(self::transientName($key));
         $stored = is_array($stored) ? $stored : [];
 
         return [
@@ -161,7 +161,7 @@ final class CircuitBreaker
      */
     public function reset(string $key): void
     {
-        delete_transient($this->transientKey($key));
+        delete_transient(self::transientName($key));
     }
 
     /**
@@ -173,7 +173,7 @@ final class CircuitBreaker
      */
     private function save(string $key, array $state): void
     {
-        set_transient($this->transientKey($key), $state, self::MEMORY_SECONDS);
+        set_transient(self::transientName($key), $state, self::MEMORY_SECONDS);
     }
 
     /**
@@ -182,7 +182,7 @@ final class CircuitBreaker
      * @param string $key Host name.
      * @return string
      */
-    private function transientKey(string $key): string
+    public static function transientName(string $key): string
     {
         return OptionKeys::TRANSIENT_PREFIX . 'cb_' . md5($key);
     }

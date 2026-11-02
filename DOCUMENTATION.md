@@ -13,8 +13,8 @@ flowchart LR
     subgraph Background["Background (WP-Cron)"]
         Scheduler["RefreshScheduler"] --> Refresher["OddsRefresher"]
         Refresher --> Factory["SourceFactory"]
-        Factory --> Source["SourceInterface<br/>BettingOddsSource · TheOddsApiSource"]
-        Source --> Http["HttpClientInterface<br/>WpHttpClient (live) · RecordedHttpClient"]
+        Factory --> Source["SourceInterface<br/>BettingOddsSource · TheOddsApiSource<br/>(DemoSource wraps them in Demo mode)"]
+        Source --> Http["HttpClientInterface<br/>WpHttpClient (live) · RecordedHttpClient (demo)"]
         Source --> Validator["OddsValidator"]
         Http --> Throttle["RateLimiter · CircuitBreaker · Deadline"]
     end
@@ -67,7 +67,9 @@ sequenceDiagram
     Sch->>Sch: after_refresh(summary), release lock
 ```
 
-A page view: `render.php` → `TableRenderer::render()` → stored event and odds → view model → template. The editor preview uses the same renderer through the REST block renderer, so editor and site show the same table.
+A page view: `render.php` → `TableRenderer::render()` → stored event and odds → view model → template. The editor preview uses the same renderer through the REST block renderer, so editor and site show the same table. Editor hints ("Choose an event…", "Odds are being fetched…") appear only in that preview: `PreviewContext` marks requests to the `/wp/v2/block-renderer/odds-comparison/odds-table` route from users who can edit posts. Any other REST request that renders the block (for example `content.rendered` from `/wp/v2/posts`) gets exactly the visitor output.
+
+The editor tracks an (event, market) pair with `POST /odds-comparison/v1/track` only after the event's market list has loaded and contains the market. The endpoint rejects pairs that can never be priced (an outrights event with Match Result, a match with an outright market, an outright market the competition does not list) with HTTP 400, so they are never queued for refreshes.
 
 ### Refresh runs
 
@@ -75,13 +77,15 @@ WP-Cron fires `odds_comparison_refresh` at the refresh interval (5, 15, 30 or 60
 
 1. Takes the lock (`odds_comparison_lock`, an atomic `add_option`). A run that finds the lock returns at once. A lock older than 10 minutes is treated as left behind by a crashed run.
 2. Fires `odds_comparison/before_refresh`.
-3. Checks the active source's robots.txt once a day.
-4. Discovers the events of each enabled competition. The Odds API is discovered only once per API interval, to protect the credit quota.
-5. Removes events that have started.
+3. Checks the active source's robots.txt once a day. The paths it disallows (competition listings, outright market pages) are skipped in steps 4 and 6 until a later check allows them; a check that fails keeps the last result.
+4. Discovers the events of each enabled competition. The Odds API is discovered only once per API interval, to protect the credit quota. A listing that yields no matches while upcoming matches of that competition are stored counts as a failure (`source_failed`, Recent errors) and leaves the stored events alone, so a blank or broken page answered with HTTP 200 cannot wipe published tables.
+5. Removes matches that started more than 7 days ago (`EventIndex::STARTED_RETENTION`). Until then a started match stays, so its blocks say "This event has started"; the editor never offers it as upcoming.
 6. Refreshes tracked (event, market) pairs that are due, soonest kick-off first and season-long markets last.
 7. Fires `odds_comparison/after_refresh` with the run summary. The summary includes `seconds`, the run's length.
 
-A run stops at `requests_per_run` steps, or earlier when the next step would not fit the time budget (below). Whatever is left waits for the next run. A failed fetch never replaces stored odds.
+A run stops at `requests_per_run` HTTP requests, or earlier when the next step would not fit the time budget (below). Requests are counted at the transport (`CountingHttpClient`), so a step answered from a page already fetched in this run (every match priced from one listing, every The Odds API pair from one response) is free and never pushes a pair into a later run that would have to request, and pay for, the page again. Whatever is left waits for the next run. A failed fetch never replaces stored odds. A failing robots.txt check (timeout, out of time, unknown source) is recorded or retried next run; it never aborts the run.
+
+Data is due when it would expire before the next run: its age is compared with the refresh age minus half a run interval. Without that slack, odds fetched a few seconds into one run are a few seconds too young at the next run and would be refreshed only every other run.
 
 #### Time budget
 
@@ -103,7 +107,7 @@ WordPress 7.0, PHP 8.3, Premier League; worst case: every match and season-long 
 | Live, BettingOdds.com | discovery and pairs answered with a 403 bot challenge; circuit opened after 3 failures | 6.97 s |
 | Simulated unresponsive host (every request runs to its timeout) | 1st attempt 15 s timeout, retry limited to 8 s, remaining 7 pairs skipped | **24.07 s** |
 
-Live scraping costs about 4–5 s per page: the 3-second minimum interval, up to 1 s jitter, and the response time. So in Live scraping mode the time budget, not `requests_per_run`, decides how much a run does: about 5 pages per run. **`requests_per_run` stays at 20.** A lower default would only slow down The Odds API, whose pairs cost no extra request, without making a scraping run any shorter.
+Live scraping costs about 4–5 s per page: the 3-second minimum interval, up to 1 s jitter, and the response time. So in Live scraping mode the time budget, not `requests_per_run`, decides how much a run does: about 5 pages per run. **`requests_per_run` stays at 20.** The minimum interval is capped at 10 s (`Settings::MAX_REQUEST_INTERVAL`): a run lasts at most 25 s, so a longer pause would leave room for a single request per run. The Cache & Schedule tab shows how many requests a run can make at the current value.
 
 For exact timing, run WP-Cron from the server (README, "Reliable updates").
 
@@ -117,11 +121,11 @@ All PHP classes live under `src/` in the `OddsComparison\` namespace (PSR-4). Ho
 | `Contracts` | `SourceInterface`, `HttpClientInterface`, `OddsRepositoryInterface`, `HookableInterface`, `DiagnosticsInterface` (optional: sources that collect non-fatal warnings) | The seams the pipeline depends on |
 | `Domain` | `Bookmaker`, `Market`, `Competition`, `Event`, `MarketOdds`, `Price`, `OddsFormat`; helpers `Assert`, `Field` | Immutable value objects, validated in their constructors |
 | `Registry` | `AbstractRegistry` → `BookmakerRegistry`, `MarketRegistry`, `CompetitionRegistry` | `config/*.php` defaults + a filter → typed lookup |
-| `Source` | `SourceFactory`, `AbstractSource` → `BettingOddsSource` (+ `BettingOddsParser`), `TheOddsApiSource` (+ `TheOddsApiMapper`) | Reading odds sites |
+| `Source` | `SourceFactory`, `AbstractSource` → `BettingOddsSource` (+ `BettingOddsParser`), `TheOddsApiSource` (+ `TheOddsApiMapper`); `DemoSource` (Demo mode decorator) | Reading odds sites |
 | `Http` | `WpHttpClient`, `RecordedHttpClient`, `RateLimiter`, `CircuitBreaker`, `RobotsTxt`, `HttpResponse`, `HttpException`, `TimeBudgetExceeded` | Transport, throttling, failure handling |
 | `Odds` | `OddsValidator`, `ValidationResult`, `OddsConverter` | Accuracy checks and format conversion (pure PHP) |
 | `Storage` | `OddsRepository`, `EventIndex`, `TrackedEventsIndex` | Everything that is stored |
-| `Scheduler` | `RefreshScheduler`, `OddsRefresher`, `CronSchedule`, `Lock` | Background refresh |
+| `Scheduler` | `RefreshScheduler`, `OddsRefresher`, `CronSchedule`, `Lock`, `DataModeSwitch` | Background refresh; reset on a Demo/Live switch |
 | `Block` | `BlockRegistrar`, `TableRenderer` | The `odds-comparison/odds-table` block |
 | `Rest` | `EditorController`, `StatusController` | `odds-comparison/v1` routes (editor: `edit_posts`; status: `manage_options`) |
 | `Admin` | `SettingsPage`, `StatusPage`, `AdminActions`, `SourceProbe`, `SourceLabels` | Admin screen |
@@ -133,8 +137,9 @@ All PHP classes live under `src/` in the `OddsComparison\` namespace (PSR-4). Ho
 |---|---|---|
 | Singleton | `Plugin` | private constructor, `instance()`, `__clone()` private, `__wakeup()` throws. The only singleton |
 | Factory | `SourceFactory::make()` | id → `SourceInterface`, from the `odds_comparison/sources` filter; an unknown id throws `InvalidArgumentException` |
-| Observer | WordPress hooks | `StatusRecorder` listens to `odds_updated`, `source_failed`, `after_refresh`; `CronSchedule` listens to `settings_saved` |
+| Observer | WordPress hooks | `StatusRecorder` listens to `odds_updated`, `source_failed`, `after_refresh`; `CronSchedule` and `DataModeSwitch` listen to `settings_saved` |
 | Strategy | `HttpClientInterface`, `SourceInterface` | live or recorded transport, chosen by `data_mode`; any source behind one interface |
+| Decorator | `DemoSource` | wraps a source in Demo mode: same prices, kick-offs moved into the coming days |
 | Template Method | `AbstractSource::fetchMarket()` / `discoverEvents()` | fixed algorithm; subclasses implement `competitionUrl()`, `marketUrl()`, `parseEvents()`, `parseMarket()` |
 | Registry | `AbstractRegistry` | config + filter, typed lookup |
 | Repository | `OddsRepository` | all odds storage behind `OddsRepositoryInterface` |
@@ -145,6 +150,10 @@ All PHP classes live under `src/` in the `OddsComparison\` namespace (PSR-4). Ho
 
 Everything is per site (each multisite site has its own). `Support\OptionKeys` names every key, and uninstall removes all of them.
 
+The options that several requests update (`odds_comparison_tracked`, `odds_comparison_errors`, `odds_comparison_status`) are changed through `Support\OptionMutex`: a MySQL named lock (`GET_LOCK`) around the read-modify-write, with the value read from the database inside the lock. A cron run logging errors and an editor previewing a block at the same moment therefore cannot overwrite each other's changes. If the lock cannot be taken within 3 seconds, the change is written anyway.
+
+Deactivation removes every event of the `odds_comparison_refresh` hook, queued manual runs included (`wp_unschedule_hook()`), and keeps the data. Uninstall also deletes the transients through the Transients API: the stored odds (found through `odds_comparison_odds_keys`), the API quota, and the circuit breaker, rate limiter and diagnostics state of the built-in sources. So they also leave a persistent object cache, where transients never reach the options table. Any other prefixed transient in the options table is removed with one prepared query.
+
 | Key | Kind | Autoload | Contents |
 |---|---|---|---|
 | `odds_comparison_settings` | option | yes | `active_source`, `data_mode`, `default_odds_format`, `enabled_competitions`, `bookmakers` (per slug: `enabled`, `link`, `label`), `bookmaker_order`, `enabled_markets`, `refresh_interval`, `stale_after`, `requests_per_run`, `min_request_interval`, `api_refresh_interval` |
@@ -153,34 +162,60 @@ Everything is per site (each multisite site has its own). `Support\OptionKeys` n
 | `odds_comparison_tracked` | option | no | `eventId|marketKey` → `postIds` (posts with a block) and `previewUntil` (editor preview); unused pairs are dropped |
 | `odds_comparison_odds_{md5(eventId|marketKey)}` | transient, 7 days | no | `MarketOdds`: `eventId`, `marketKey`, `sourceId`, `fetchedAt`, `selections` → `label`, `prices` → bookmaker slug → `{decimal}` |
 | `odds_comparison_odds_keys` | option | no | stored odds transient name → expiry time (for "Clear cached odds"); expired and deleted entries are dropped |
-| `odds_comparison_status` | option | no | per source: last success, last error, robots.txt result, competition fetch times; last 10 run summaries |
-| `odds_comparison_errors` | option | no | newest 50 log entries |
+| `odds_comparison_status` | option | no | per source: last success, last error, robots.txt result (with the disallowed paths that refreshes skip), competition fetch times; last 10 run summaries |
+| `odds_comparison_errors` | option | no | newest 50 log entries: `time`, `level`, `source`, `message`, `count`. A repeat of the newest entry only increments `count` and updates `time` (the Status tab shows "(×9)"), so repeats cannot push real errors out |
 | `odds_comparison_lock` | option | no | `{start time}:{random token}` of the running refresh, written with atomic SQL so only one run holds it |
 | `odds_comparison_cb_*`, `odds_comparison_rl_*`, `odds_comparison_theoddsapi_quota` | transients | no | circuit state per host, last request time per host, API credits |
 
-Event ids are `{source}:{competition}/{source's own id}`, e.g. `bettingodds:premier-league/4othg6zhiyox0rivijbld3swk`; outrights are `{source}:{competition}/outrights`. Only the decimal price is stored; fractional and American are derived when shown.
+Event ids are `{source}:{competition}/{source's own id}`, e.g. `bettingodds:premier-league/4othg6zhiyox0rivijbld3swk`; outrights are `{source}:{competition}/outrights`. Only the decimal price is stored; fractional and American are derived when shown. Sources quote decimals rounded to two places, so both are derived from the exact fraction behind the decimal (the standard bookmaker fraction it rounds, e.g. 1.17 → 1/6), not from the rounded number: 1/6 is shown as −600 in American odds, not −588. A ladder fraction is used when the decimal lies in the half-open window [fraction − 0.005, fraction + 0.005), which holds exactly one two-place decimal: 3.12 is 85/40 and 3.13 is 213/100, so no two prices ever look the same, and fractional and American always agree (1.995 is 1/1 and +100).
 
 The block stores its choices as attributes in the post: `eventId`, `marketKey`, `bookmakers` (slugs, in order), `selections`, `oddsFormat`, `highlightBest`, `showFormatSwitcher`, `caption`.
+
+### Demo mode
+
+`data_mode` is `demo` (the default for new installs) or `live`; `recorded`, from earlier builds, reads as
+`demo`. In Demo mode:
+
+- The composition root (`Plugin`) gives every source a `RecordedHttpClient` over `fixtures/`: real responses
+  captured from BettingOdds.com and The Odds API on 2026-10-30 (Premier League: matches and four outright
+  markets), shipped in the release zip and listed with checksums in each `fixtures/*/manifest.json`. No
+  outside request is made, and The Odds API needs no key. Recorded HTML pages are stored as `.txt`, so a web
+  server sends them as plain text and a browser never runs their scripts on the site's domain.
+- Each source is wrapped in `DemoSource`. It moves every kick-off forward by whole days: the smallest number
+  of days that puts the capture time at or after now (`DemoSource::dayShift()`), keeping the UK wall-clock
+  time. Every recorded match is therefore upcoming, whatever the date. Prices, bookmakers and event ids are
+  unchanged, and fetched odds are stamped with the real time, so caching, staleness and "started" work as in
+  Live mode.
+- Competitions without recorded data get no demo events (a warning in **Recent errors**). Sources added
+  through `odds_comparison/sources` receive the recorded transport too, so they have no demo data unless their
+  responses are recorded.
+- Tables show a "Demo data" badge; the Status tab and the Dashboard show how to go live.
+
+Switching between Demo and Live (`DataModeSwitch`, on `odds_comparison/settings_saved`) clears the stored
+odds, the event index and the per-source status, then queues a refresh, so demo odds are never shown as live
+and the reverse. When the live source fails (an error newer than the last success, or its circuit is open), the
+admin notice offers **Use demo data** (`admin-post.php?action=odds_comparison_use_demo`, `manage_options` and
+a nonce); the change goes through the settings form's own validation.
 
 ## Caching and freshness
 
 - **Odds** are kept until replaced by newer good data. The 7-day transient expiry is only garbage collection. A failed refresh never removes them.
 - **Refresh interval** (Cache & Schedule tab: 5, 15, 30 or 60 min): odds older than this are refetched on the next run. The Odds API uses its own longer interval (default 180 min) to save credits.
-- **Stale after** (10–1440 min, default 60): older odds are still shown, with "Odds may be out of date". Both values can be changed in code with `odds_comparison/cache_ttl`.
+- **Stale after** (10–1440 min, default 60): older odds are still shown, with "Odds may be out of date". The threshold is per source and never shorter than the source's own refresh age plus one refresh interval (`Settings::staleAfterFor()`): with The Odds API fetched every 180 minutes, odds count as stale after 195 minutes, not 60. Both values can be changed in code with `odds_comparison/cache_ttl`.
 - **Only what is used is fetched**: tracked pairs (blocks in posts, plus 24 hours after an editor preview), and only matches that have not started.
-- **Rendered HTML** is cached in the `odds_comparison` object-cache group for 5 minutes. The key includes the attributes, the event, the odds' `fetchedAt`, the settings, the locale and the current minute, so new odds or settings show at once. The cache is checked before the table is built, so a hit skips the price conversions too. With a persistent object cache this cache is shared between requests; without one it only spans the request.
-- **Started matches** show "This event has started" instead of old prices.
+- **Rendered HTML** is cached in the `odds_comparison` object-cache group for 5 minutes. The key includes the attributes, the event (and whether it has started), the odds' `fetchedAt` and stale flag, the bookmaker links as returned by `odds_comparison/bookmaker_link`, the settings, the locale and the site's date, so new odds, settings or link filters show at once. Nothing in it changes by the minute: the footer shows the fetch time ("Updated 14:05", with the date on other days), not "5 minutes ago". The cache is checked before the table is built, so a hit skips the price conversions too. With a persistent object cache this cache is shared between requests; without one it only spans the request.
+- **Started matches** show "This event has started" instead of old prices, for 7 days after kick-off; the editor's event list leaves them out (the block's own event is shown marked "(started)").
 
 ## Rate limits and accuracy
 
 **Being a polite client:**
 
-- At least 3 s (setting `min_request_interval`, 2–30) plus up to 1 s jitter between requests to the same host, kept across runs in a transient.
+- At least 3 s (setting `min_request_interval`, 2–10) plus up to 1 s jitter between requests to the same host, kept across runs in a transient.
 - One honest User-Agent (`OddsComparisonPlugin/{version} (+site URL)`), no header tricks, no evasion of bot protection.
 - Retries for timeouts and 5xx after 1 s and 3 s. `Retry-After` on 429/503 pauses the host for that long (up to 1 h).
 - A circuit breaker pauses a host after 3 consecutive failures (bot challenges, 401/403/429, exhausted retries) for 1 hour. 404s and pages without odds don't count: they are page problems.
-- robots.txt is checked daily; disallowed paths are never requested.
-- A run is limited to `requests_per_run` steps and a 25 s deadline (see [Refresh runs](#refresh-runs)).
+- robots.txt is checked daily; the listing and outright pages it disallows are skipped by every refresh until a later check allows them.
+- A run is limited to `requests_per_run` HTTP requests and a 25 s deadline (see [Refresh runs](#refresh-runs)).
 - Responses are memoized per run: all matches priced from one listing cost one request.
 
 **Accuracy (`OddsValidator`):**
@@ -388,6 +423,10 @@ The source then appears under **General → Data source** (by its id; switching 
 
 **Template override:** copy `templates/odds-table.php` to `your-theme/odds-comparison/odds-table.php` and edit it. It receives `$args` (the view model of `TableRenderer::viewModel()`): `state`, `rows`, `columns`, `bestOffers`, `eventName`, `home`, `away`, `kickoff`, `subtitle`, `updated`, `stale`, `disclaimer` and more. Escape everything you print.
 
+**Tables added later:** `view.js` sets up every table on the page once (`data-oc-ready`) and watches the page with a `MutationObserver`, so tables inserted later by AJAX navigation, infinite scroll or "load more" get the format switcher and the phone view's "Compare all" button too. Code that inserts tables in another way can call `window.oddsComparison.init( element )`.
+
+**Escaping:** strings are stored and passed around as plain text (exception and log messages included) and escaped once, where they are printed. Escaping earlier shows `Brighton &amp;amp; Hove` on the page.
+
 **Styling:** CSS custom properties on `.oc-odds`: `--oc-accent`, `--oc-accent-text`, `--oc-card-bg`, `--oc-text`, `--oc-border`, `--oc-rule`, `--oc-chip-border`, `--oc-muted`, `--oc-stale`.
 
 **Filters:**
@@ -481,11 +520,14 @@ The BettingOdds.com parser reads data attributes, not layout, so most redesigns 
 
 | Symptom | Cause and fix |
 |---|---|
-| Status tab: **Paused** for a source, "blocked by bot protection (challenge page)" | The site challenges server requests (BettingOdds.com does this to most servers). The plugin never tries to get around it. Switch **General → Data source** to The Odds API. After fixing a cause, use **Allow paused sources again**. |
+| No odds after switching to Live | The admin notice names the source's error and offers **Use demo data**. For live odds, configure The Odds API (README, "Going live"). |
+| Status tab: **Paused** for a source, "blocked by bot protection (challenge page)" | The site challenges server requests (BettingOdds.com does this to most servers). The plugin never tries to get around it. Switch **General → Data source** to The Odds API, or use demo data meanwhile. After fixing a cause, use **Allow paused sources again**. |
+| "Demo data has no recorded odds for …" in Recent errors | Demo data covers the Premier League only. Disable other competitions while in Demo mode, or go live. |
 | A block shows "Odds temporarily unavailable" | No good odds stored yet for that event and market, or the market was disabled. Check the Status tab's errors; use **Refresh now**. |
 | The editor says "Odds are being fetched" for a long time | WP-Cron didn't run: no visits, or `DISABLE_WP_CRON` without a server cron. Set up the system cron (README) or use **Refresh now**. |
-| "This event has started" | Expected: prices are removed at kick-off. |
-| "Odds may be out of date" | Odds are older than **Stale after**: refreshes are failing (Status tab) or cron isn't running. |
+| "This event has started" | Expected: prices are removed at kick-off. The notice shows for 7 days; after that the match leaves the index and the block shows nothing. |
+| "… listing returned no matches although N upcoming match(es) are stored" | The source answered with a page without matches (blank, blocked or changed). Stored events and odds were kept. If it persists, see "When the source's markup changes". |
+| "Odds may be out of date" | Odds are older than **Stale after** (for The Odds API: its interval plus one refresh interval, if longer): refreshes are failing (Status tab) or cron isn't running. |
 | The Odds API: "key is not configured" | Define `ODDS_COMPARISON_THEODDSAPI_KEY` in `wp-config.php` (README). |
 | The Odds API: "quota is nearly exhausted" | Few credits left; the plugin stops calling the API to keep a reserve. Raise **Cache & Schedule → The Odds API interval** or upgrade the plan. |
 | Cron not running at all | `wp cron event list` must show `odds_comparison_refresh`. The plugin re-creates it on the next page load if another tool removed it. |
@@ -539,7 +581,7 @@ Audited 2026-10-31, file by file: request input (`$_GET`/`$_POST`/`$_REQUEST`/`$
 | SQLi | ✅ Raw queries only in two places, all through `$wpdb->prepare` with fixed table names from `$wpdb`: uninstall's prefixed transient delete (with `esc_like`) and the refresh lock's atomic insert/compare-and-swap/delete | `src/Lifecycle/Uninstaller.php`, `src/Scheduler/Lock.php` |
 | CSRF | ✅ Settings go through `options.php` (`settings_fields()` nonce). admin-post actions call `check_admin_referer()`. Admin and editor JS use `apiFetch` (`X-WP-Nonce`) | `src/Admin/SettingsPage.php`, `src/Admin/AdminActions.php` |
 | AuthZ | ✅ Every REST route has a `permission_callback`: `manage_options` for `/status` and `/refresh`, `edit_posts` for the editor routes. No public routes. admin-post handlers check `manage_options` before the nonce | `src/Rest/*`, `src/Admin/AdminActions.php` |
-| SSRF | ✅ Base URLs are constants. Scraped paths pass `Assert::relativePath()`: `@`, `:`, `//`, `..`, `#` and whitespace are rejected, so the host cannot change. Requests use `wp_safe_remote_get` (`reject_unsafe_urls`). Recorded files are opened via `basename()` | `src/Domain/Assert.php`, `src/Source/*`, `src/Http/*` |
+| SSRF | ✅ Base URLs are constants. Scraped paths pass `Assert::relativePath()`: `@`, `:`, `//`, `..`, `#` and whitespace are rejected, so the host cannot change. Requests use `wp_safe_remote_get` (`reject_unsafe_urls`). Recorded files are opened via `basename()` and shipped as `.txt`/`.json`, never as HTML | `src/Domain/Assert.php`, `src/Source/*`, `src/Http/*` |
 | Untrusted HTML | ✅ `DOMDocument` with `libxml_use_internal_errors(true)` and `LIBXML_NONET`; 4 MB response cap | `src/Source/BettingOdds/BettingOddsParser.php`, `src/Http/WpHttpClient.php` |
 | Bad links | ✅ Saved affiliate links: `esc_url_raw` with `http`/`https` only. **Fixed:** links returned by the `odds_comparison/bookmaker_link` filter now get the same rule; a `javascript:` link used to render as `<a href="">` and now shows the bookmaker's name without a link | `src/Settings/SettingsSanitizer.php`, `src/Block/TableRenderer.php` |
 | Input integrity | ✅ Settings: merge-on-save sanitizer with allowlisted enums and clamped numbers. REST arguments: typed schemas with patterns and length limits. `tab` and `oc_notice` query values are allowlisted | `src/Settings/SettingsSanitizer.php`, `src/Rest/EditorController.php` |

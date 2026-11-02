@@ -88,7 +88,7 @@ final class WpHttpClient implements HttpClientInterface
         }
 
         if (!$this->circuitBreaker->allowRequest($host)) {
-            throw new HttpException(sprintf('Requests to %s are paused (circuit open).', esc_html($host)));
+            throw new HttpException(sprintf('Requests to %s are paused (circuit open).', $host));
         }
 
         $attempt = 0;
@@ -124,7 +124,7 @@ final class WpHttpClient implements HttpClientInterface
             if (!$retry) {
                 $this->circuitBreaker->recordFailure($host, $reason);
 
-                throw new HttpException(sprintf('%s failed after retries: %s', esc_url_raw($shown), esc_html($reason)));
+                throw new HttpException(sprintf('%s failed after retries: %s', esc_url_raw($shown), $reason));
             }
 
             ($this->sleep)(self::RETRY_DELAYS[$attempt]);
@@ -226,7 +226,7 @@ final class WpHttpClient implements HttpClientInterface
     {
         $this->circuitBreaker->recordFailure($host, $reason);
 
-        throw new HttpException(sprintf('%s: %s.', esc_url_raw($shown), esc_html($reason)), (int) $status);
+        throw new HttpException(sprintf('%s: %s.', esc_url_raw($shown), $reason), (int) $status);
     }
 
     /**

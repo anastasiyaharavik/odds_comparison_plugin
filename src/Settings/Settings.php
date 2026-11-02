@@ -13,6 +13,7 @@ namespace OddsComparison\Settings;
 use InvalidArgumentException;
 use OddsComparison\Domain\Bookmaker;
 use OddsComparison\Domain\OddsFormat;
+use OddsComparison\Source\TheOddsApi\TheOddsApiSource;
 use OddsComparison\Support\OptionKeys;
 
 defined('ABSPATH') || exit;
@@ -28,13 +29,19 @@ defined('ABSPATH') || exit;
 final class Settings
 {
     /**
+     * Longest pause between requests to one host (seconds). A refresh run has a 25-second budget,
+     * so 10 s still allows three requests per run; longer pauses would allow only one.
+     */
+    public const MAX_REQUEST_INTERVAL = 10;
+
+    /**
      * Default values. Stored as a single autoloaded option.
      *
      * @var array<string, mixed>
      */
     public const DEFAULTS = [
         'active_source'        => 'bettingodds',
-        'data_mode'            => 'live',
+        'data_mode'            => 'demo',
         'default_odds_format'  => 'fractional',
         'enabled_competitions' => ['premier-league'],
         'bookmakers'           => [],
@@ -69,7 +76,7 @@ final class Settings
     public function get(string $key): mixed
     {
         if (!array_key_exists($key, self::DEFAULTS)) {
-            throw new InvalidArgumentException(sprintf('Unknown setting "%s".', esc_html($key)));
+            throw new InvalidArgumentException(sprintf('Unknown setting "%s".', $key));
         }
 
         return $this->all()[$key];
@@ -240,6 +247,37 @@ final class Settings
     }
 
     /**
+     * Minutes after which a source's stored odds are fetched again: The Odds API interval for
+     * The Odds API (credit quota), the refresh interval otherwise.
+     *
+     * @param string $sourceId Source id.
+     * @return int
+     */
+    public function refreshAgeFor(string $sourceId): int
+    {
+        return $sourceId === TheOddsApiSource::ID
+            ? $this->apiRefreshInterval()
+            : $this->cacheTtl()['refresh_interval'];
+    }
+
+    /**
+     * Minutes after which a source's odds count as stale ("Odds may be out of date").
+     *
+     * The "Stale after" setting, but never less than the source's normal refresh age plus one
+     * refresh interval: odds fetched every 3 hours (The Odds API) are not out of date after one
+     * hour, they are on schedule.
+     *
+     * @param string $sourceId Source id.
+     * @return int
+     */
+    public function staleAfterFor(string $sourceId): int
+    {
+        $ttl = $this->cacheTtl();
+
+        return max($ttl['stale_after'], $this->refreshAgeFor($sourceId) + $ttl['refresh_interval']);
+    }
+
+    /**
      * Minutes after which odds count as stale, clamped to 10–1440.
      *
      * @return int
@@ -250,23 +288,36 @@ final class Settings
     }
 
     /**
-     * Data mode: `live` or `recorded` (unknown values fall back to `live`).
+     * Data mode: `demo` (recorded odds with kick-offs moved into the coming days; the default, so
+     * a new install shows odds at once) or `live`. `recorded`, the dev-only mode of earlier
+     * builds, reads as `demo`; unknown values fall back to `live`.
      *
      * @return string
      */
     public function dataMode(): string
     {
-        return $this->get('data_mode') === 'recorded' ? 'recorded' : 'live';
+        return in_array($this->get('data_mode'), ['demo', 'recorded'], true) ? 'demo' : 'live';
     }
 
     /**
-     * Minimum seconds between requests to one host, clamped to 2–30.
+     * Whether visitors see demo data.
+     *
+     * @return bool
+     */
+    public function isDemo(): bool
+    {
+        return $this->dataMode() === 'demo';
+    }
+
+    /**
+     * Minimum seconds between requests to one host, clamped to 2–{@see self::MAX_REQUEST_INTERVAL}
+     * (values saved by earlier versions, up to 30, are capped).
      *
      * @return int
      */
     public function minRequestInterval(): int
     {
-        return max(2, min(30, (int) $this->get('min_request_interval')));
+        return max(2, min(self::MAX_REQUEST_INTERVAL, (int) $this->get('min_request_interval')));
     }
 
     /**

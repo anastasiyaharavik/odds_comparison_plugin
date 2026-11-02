@@ -68,7 +68,7 @@ final class SettingsSanitizer
      * @param list<string>  $markets           Registered market keys (registry order).
      * @param list<string>  $bookmakers        Registered bookmaker slugs (registry order).
      * @param list<string>  $sources           Registered source ids.
-     * @param bool          $recordedAvailable Whether Recorded mode can be used (fixtures present).
+     * @param bool          $demoAvailable     Whether Demo mode can be used (recorded data present).
      * @param Closure|null  $probe             fn(string $sourceId): ?string; error message or null when usable.
      * @param array<string, string> $sourceLabels Source id => display name (for messages).
      */
@@ -77,7 +77,7 @@ final class SettingsSanitizer
         private readonly array $markets,
         private readonly array $bookmakers,
         private readonly array $sources,
-        private readonly bool $recordedAvailable,
+        private readonly bool $demoAvailable,
         private readonly ?Closure $probe = null,
         private readonly array $sourceLabels = []
     ) {
@@ -126,12 +126,13 @@ final class SettingsSanitizer
     {
         $mode = $this->key($input['data_mode'] ?? '');
 
-        if ($mode === 'live' || ($mode === 'recorded' && $this->recordedAvailable)) {
+        if ($mode === 'live' || ($mode === 'demo' && $this->demoAvailable)) {
             $settings['data_mode'] = $mode;
         } else {
             $this->error(
                 'data_mode',
-                __('Recorded mode is only available in development checkouts with recorded data.', 'odds-comparison')
+                // phpcs:ignore Generic.Files.LineLength.TooLong -- translatable sentence must stay one literal.
+                __('Demo data is missing from this copy of the plugin (fixtures/ folder); reinstall the plugin.', 'odds-comparison')
             );
         }
 
@@ -382,8 +383,12 @@ final class SettingsSanitizer
             $input,
             'min_request_interval',
             2,
-            30,
-            __('"Minimum request interval" must be between 2 and 30 seconds.', 'odds-comparison')
+            Settings::MAX_REQUEST_INTERVAL,
+            sprintf(
+                /* translators: %d: maximum number of seconds. */
+                __('"Minimum request interval" must be between 2 and %d seconds.', 'odds-comparison'),
+                Settings::MAX_REQUEST_INTERVAL
+            )
         );
 
         $api = $this->choice($input['api_refresh_interval'] ?? null, self::API_REFRESH_INTERVALS);

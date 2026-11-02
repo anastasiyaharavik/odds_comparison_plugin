@@ -204,8 +204,8 @@ $oc_bookmaker_html = static function (string $name, string $link) use ($oc_new_t
                 <?php if ($args['stale']) : ?>
                     <span class="oc-odds__stale"><?php esc_html_e('Odds may be out of date', 'odds-comparison'); ?></span>
                 <?php endif; ?>
-                <?php if ($args['recorded']) : ?>
-                    <span class="oc-odds__badge"><?php esc_html_e('Recorded data', 'odds-comparison'); ?></span>
+                <?php if (!empty($args['demo'])) : ?>
+                    <span class="oc-odds__badge"><?php esc_html_e('Demo data', 'odds-comparison'); ?></span>
                 <?php endif; ?>
                 <span class="oc-odds__disclaimer"><?php echo esc_html((string) $args['disclaimer']); ?></span>
             </span>

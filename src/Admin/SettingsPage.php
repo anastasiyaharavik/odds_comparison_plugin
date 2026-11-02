@@ -17,6 +17,7 @@ use OddsComparison\Plugin;
 use OddsComparison\Registry\BookmakerRegistry;
 use OddsComparison\Registry\CompetitionRegistry;
 use OddsComparison\Registry\MarketRegistry;
+use OddsComparison\Scheduler\RefreshScheduler;
 use OddsComparison\Settings\Settings;
 use OddsComparison\Settings\SettingsSanitizer;
 use OddsComparison\Source\SourceFactory;
@@ -68,7 +69,7 @@ final class SettingsPage implements HookableInterface
      * @param SourceProbe         $probe        Source switch probe.
      * @param StatusPage          $status       Status tab renderer and bookmaker coverage.
      * @param string              $pluginFile   Main plugin file (asset URLs).
-     * @param bool                $recordedAvailable Whether Recorded mode can be chosen.
+     * @param bool                $demoAvailable Whether Demo mode can be chosen (recorded data present).
      */
     public function __construct(
         private readonly Settings $settings,
@@ -79,7 +80,7 @@ final class SettingsPage implements HookableInterface
         private readonly SourceProbe $probe,
         private readonly StatusPage $status,
         private readonly string $pluginFile,
-        private readonly bool $recordedAvailable
+        private readonly bool $demoAvailable
     ) {
     }
 
@@ -153,7 +154,7 @@ final class SettingsPage implements HookableInterface
             $this->markets->keys(),
             $this->bookmakers->keys(),
             $this->sources->ids(),
-            $this->recordedAvailable,
+            $this->demoAvailable,
             fn (string $sourceId): ?string => $this->probe->problem($sourceId),
             $this->sourceLabels()
         );
@@ -357,29 +358,29 @@ final class SettingsPage implements HookableInterface
      */
     public function fieldDataMode(): void
     {
-        $mode = (string) $this->settings->get('data_mode');
+        $mode = $this->settings->dataMode();
 
         echo '<fieldset aria-describedby="oc-data-mode-help"><legend class="screen-reader-text">'
             . esc_html__('Data mode', 'odds-comparison') . '</legend>';
         printf(
+            '<label class="oc-choice">'
+            . '<input type="radio" name="%1$s[data_mode]" value="demo"%2$s%3$s /> %4$s</label>',
+            esc_attr(self::NAME),
+            checked('demo', $mode, false),
+            disabled($this->demoAvailable, false, false),
+            esc_html__('Demo data', 'odds-comparison')
+        );
+        printf(
             '<label class="oc-choice"><input type="radio" name="%1$s[data_mode]" value="live"%2$s /> %3$s</label>',
             esc_attr(self::NAME),
             checked('live', $mode, false),
-            esc_html__('Live', 'odds-comparison')
-        );
-        printf(
-            '<label class="oc-choice">'
-            . '<input type="radio" name="%1$s[data_mode]" value="recorded"%2$s%3$s /> %4$s</label>',
-            esc_attr(self::NAME),
-            checked('recorded', $mode, false),
-            disabled($this->recordedAvailable, false, false),
-            esc_html__('Recorded (development only)', 'odds-comparison')
+            esc_html__('Live odds from the data source', 'odds-comparison')
         );
         echo '</fieldset>';
         $this->help(
             'oc-data-mode-help',
             // phpcs:ignore Generic.Files.LineLength.TooLong -- translatable sentence must stay one literal.
-            __('Recorded mode replays real pages captured from the source, for tests and offline development. Visitors should always see Live data.', 'odds-comparison')
+            __('Demo data shows real odds recorded from the data source, with kick-off dates moved to the coming days, and makes no outside requests. Tables show a "Demo data" badge. Switch to Live once the data source works (see the Status tab).', 'odds-comparison')
         );
     }
 
@@ -559,13 +560,20 @@ final class SettingsPage implements HookableInterface
         $this->number(
             'oc-min-request-interval',
             'min_request_interval',
-            (int) $this->settings->get('min_request_interval'),
+            $this->settings->minRequestInterval(),
             2,
-            30
+            Settings::MAX_REQUEST_INTERVAL
         );
+        $interval = $this->settings->minRequestInterval();
         $this->help(
             'oc-min-request-interval-help',
-            __('Seconds between two requests to the same site (plus a little random delay).', 'odds-comparison')
+            sprintf(
+                /* translators: 1: maximum seconds, 2: seconds per run, 3: requests per run. */
+                __('Seconds between two requests to the same site (plus a little random delay), at most %1$d. A refresh run lasts up to %2$d seconds, so at this value it can make about %3$d requests to the site.', 'odds-comparison'), // phpcs:ignore Generic.Files.LineLength.TooLong
+                Settings::MAX_REQUEST_INTERVAL,
+                (int) RefreshScheduler::TIME_BUDGET,
+                (int) floor(RefreshScheduler::TIME_BUDGET / max(1, $interval)) + 1
+            )
         );
     }
 
@@ -644,10 +652,10 @@ final class SettingsPage implements HookableInterface
     {
         return [
             'general'    => [
+                [__('Data mode', 'odds-comparison'), 'fieldDataMode'],
                 [__('Data source', 'odds-comparison'), 'fieldActiveSource'],
                 [__('Competitions', 'odds-comparison'), 'fieldCompetitions'],
                 [__('Default odds format', 'odds-comparison'), 'fieldOddsFormat', 'oc-default-odds-format'],
-                [__('Data mode', 'odds-comparison'), 'fieldDataMode'],
             ],
             'bookmakers' => [
                 [__('Bookmakers and links', 'odds-comparison'), 'fieldBookmakers', '', 'bookmakerCount'],

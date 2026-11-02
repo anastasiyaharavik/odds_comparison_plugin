@@ -180,4 +180,42 @@ final class OddsConverterTest extends TestCase
             );
         }
     }
+
+    public function testNoTwoTwoPlacePricesShareAFraction(): void
+    {
+        $converter = new OddsConverter();
+
+        self::assertSame('85/40', $converter->toFractional(3.12));
+        self::assertSame('213/100', $converter->toFractional(3.13), 'the boundary belongs to one side only');
+        self::assertSame('13/8', $converter->toFractional(2.62));
+        self::assertNotSame($converter->toFractional(2.62), $converter->toFractional(2.63));
+
+        $seen   = [];
+        $shared = [];
+
+        for ($cents = 101; $cents <= 10000; $cents++) {
+            $fraction = $converter->toFractional($cents / 100);
+
+            if (isset($seen[$fraction])) {
+                $shared[] = sprintf('%.2f and %.2f are both %s', $seen[$fraction], $cents / 100, $fraction);
+            }
+
+            $seen[$fraction] = $cents / 100;
+        }
+
+        self::assertSame([], $shared);
+    }
+
+    public function testFractionalAndAmericanAgree(): void
+    {
+        $converter = new OddsConverter();
+
+        foreach ([[1.995, '1/1', '+100'], [1.17, '1/6', '-600'], [3.12, '85/40', '+213']] as [$decimal, $frac, $us]) {
+            self::assertSame(
+                [$frac, $us],
+                [$converter->toFractional($decimal), $converter->toAmerican($decimal)],
+                (string) $decimal
+            );
+        }
+    }
 }

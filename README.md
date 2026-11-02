@@ -11,6 +11,10 @@ Odds come from one of two sources, behind the same interface:
   never tries to get around it.
 - **The Odds API**: a licensed odds feed (free plan available) that works from any server. Recommended.
 
+A new install starts with **demo data**, so the block works straight away without a key: real odds recorded
+from these sources, with kick-off dates moved to the coming days (they never go out of date). Tables are marked
+"Demo data". When you are ready for live odds, see [Going live](#going-live).
+
 Odds are fetched in the background (WP-Cron) and stored. Pages only read stored odds, so a block adds a few
 milliseconds and no outside requests to a page view ([measurements](DOCUMENTATION.md#performance)).
 
@@ -23,7 +27,7 @@ milliseconds and no outside requests to a page view ([measurements](DOCUMENTATIO
 
 ## Requirements
 
-- WordPress 6.5 or later, PHP 8.1 or later, MySQL 5.7+ / MariaDB 10.4+.
+- WordPress 6.7 or later, PHP 8.1 or later, MySQL 5.7+ / MariaDB 10.4+.
 - A persistent object cache is optional and used automatically.
 - For live odds from any server: a free [The Odds API](https://the-odds-api.com) key.
 
@@ -31,19 +35,35 @@ milliseconds and no outside requests to a page view ([measurements](DOCUMENTATIO
 
 **From the release zip:** download `odds-comparison.zip` from the repository's Releases page, then in WordPress
 go to **Plugins → Add New Plugin → Upload Plugin**, choose the file and activate **Odds Comparison**. The zip
-includes the compiled block and the Composer autoloader.
+includes the compiled block, the Composer autoloader and the demo data.
 
 **From the repository:** the compiled block is committed and the plugin loads its own classes, so no build
 step is needed. Clone or copy the repository into `wp-content/plugins/odds-comparison` and activate it
-(**Plugins** screen, or `wp plugin activate odds-comparison`). On activation the plugin adds its settings with defaults and schedules the
-background refresh. Uninstalling removes all its data; deactivating keeps it.
+(**Plugins** screen, or `wp plugin activate odds-comparison`).
+
+On activation the plugin adds its settings with defaults, starts the first refresh and schedules the next ones.
+With demo data (the default) the block editor lists Premier League events within a minute or two. Uninstalling
+removes all its data; deactivating keeps it.
 
 ## Configuration
 
 After activating the plugin, open **Odds Comparison** in the WordPress admin menu. Each tab saves on its own;
 saving one tab never changes the others. Problems are reported at the top of the screen, and an invalid value
-keeps its previous setting. (The screenshots show odds from real captured pages, hence the "Recorded data"
-notices.)
+keeps its previous setting. (The screenshots come from an earlier build, which labelled demo data "Recorded data";
+the current build says "Demo data".)
+
+### Going live
+
+Demo data needs no setup. For live odds:
+
+1. Add a free The Odds API key (next section). BettingOdds.com, the scraper source, blocks requests from most
+   web servers, so on a typical host it returns no odds.
+2. On the **General** tab choose **The Odds API** as the data source and set **Data mode** to
+   **Live odds from the data source**, then save.
+
+Switching between demo and live clears the stored odds and events and starts a refresh, so demo odds are never
+shown as live. If the live source stops responding, the Status tab and the Dashboard show the error, what to do,
+and a **Use demo data** button.
 
 ### 1. Add The Odds API key (recommended)
 
@@ -59,14 +79,14 @@ notices.)
 
 ### 2. General tab
 
-![General tab: data source, competitions, default odds format, data mode](docs/screenshots/admin-general.png)
+![General tab: data mode, data source, competitions, default odds format](docs/screenshots/admin-general.png)
 
 | Setting | What to choose |
 |---|---|
+| Data mode | **Demo data** (the default): real recorded odds with kick-off dates moved to the coming days, no outside requests, tables marked "Demo data". **Live odds from the data source**: what visitors should see once a source works (see [Going live](#going-live)). |
 | Data source | **The Odds API** for reliable live odds. Switching first makes one check request and only switches if it returns odds; otherwise the reason is shown and nothing changes. |
 | Competitions | The leagues whose matches you want to offer in posts. Premier League is on by default. |
 | Default odds format | Fractional (5/2), Decimal (3.50) or American (+250). Visitors can switch on the page. |
-| Data mode | Leave on **Live**. The *Recorded* option (replays saved pages) is not part of the release zip. |
 
 ### 3. Bookmakers & markets tab
 
@@ -90,13 +110,15 @@ Editors set the order of bookmakers in each block.
 
 The defaults suit most sites. *Refresh interval* is how often odds are updated (default 15 minutes). *The Odds
 API interval* controls how often the API is asked per league; each request uses one credit of your plan (the
-default of 3 hours keeps one league well inside the free plan).
+default of 3 hours keeps one league well inside the free plan). *Stale after* marks odds as possibly out of date; for The Odds API it is
+never shorter than its interval plus one refresh, so on-schedule odds are not flagged. *Minimum request interval*
+(2–10 seconds) is the pause between requests to a site; the help text shows how many requests a run can make.
 
 ### 5. Status tab
 
 ![Status tab: live strip with Refresh now, sources, schedule, recent refreshes and errors](docs/screenshots/admin-status.png)
 
-- The strip at the top says whether odds are flowing (Live, Not updating, Paused or Recorded data), from which
+- The strip at the top says whether odds are flowing (Live, Not updating, Paused or Demo data), from which
   source, when they were last updated and how many API credits are left. **Refresh now** updates odds in the
   background and reports the result on the page.
 - **Sources**: for each source, whether it is in use and working, its last successful fetch, the last error,

@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Recorded-response transport (Recorded mode, tests).
+ * Recorded-response transport (Demo mode, tests).
  *
  * @package OddsComparison
  */
@@ -21,7 +21,7 @@ defined('ABSPATH') || exit;
  * `fixtures/{source}/manifest.json`. Never touches the network.
  *
  * URLs are compared with `apiKey` redacted, matching how the manifests store them. A URL that
- * was not recorded fails like a 404, so Recorded mode can never fall back to live requests.
+ * was not recorded fails like a 404, so Demo mode can never fall back to live requests.
  */
 final class RecordedHttpClient implements HttpClientInterface
 {
@@ -63,7 +63,7 @@ final class RecordedHttpClient implements HttpClientInterface
     /**
      * When the response for a URL was captured, or null when it is not recorded.
      *
-     * In Recorded mode this is "now" for kick-off and staleness checks.
+     * Demo mode resolves recorded kick-off dates against it.
      *
      * @param string $url URL.
      * @return DateTimeImmutable|null

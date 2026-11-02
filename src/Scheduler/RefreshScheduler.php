@@ -15,6 +15,7 @@ use DateTimeImmutable;
 use OddsComparison\Contracts\HookableInterface;
 use OddsComparison\Contracts\OddsRepositoryInterface;
 use OddsComparison\Domain\Event;
+use OddsComparison\Http\CountingHttpClient;
 use OddsComparison\Registry\CompetitionRegistry;
 use OddsComparison\Settings\Settings;
 use OddsComparison\Source\TheOddsApi\TheOddsApiSource;
@@ -31,12 +32,14 @@ defined('ABSPATH') || exit;
  *
  * 1. Take the lock; overlapping runs return immediately.
  * 2. Fire `odds_comparison/before_refresh`.
- * 3. Check robots.txt of the active source once a day.
+ * 3. Check robots.txt of the active source once a day. Paths it disallows are skipped below
+ *    (discovery and pairs alike) until a later check allows them.
  * 4. Discover events of enabled competitions on the active source.
  * 5. Refresh due tracked pairs of the active source, soonest kick-off first. A pair is due when
  *    it has no odds or they are older than the refresh interval (The Odds API: the API interval,
  *    to protect the credit quota).
- * 6. Stop at `requests_per_run` requests, or when the next step would not fit the time budget
+ * 6. Stop at `requests_per_run` HTTP requests (counted at the transport, so steps answered from
+ *    a page already fetched in this run are free), or when the next step would not fit the time budget
  *    (estimated from the slowest step so far); the rest waits for the next run. The same
  *    deadline caps HTTP timeouts and retries, so a run ends within the budget.
  * 7. Report the source's non-fatal warnings and unknown bookmaker codes to the error log
@@ -62,6 +65,9 @@ final class RefreshScheduler implements HookableInterface
      * @param Lock                    $lock         Run lock.
      * @param Deadline                $deadline     Run deadline, shared with the HTTP client.
      * @param Closure|null            $clock        fn(): DateTimeImmutable.
+     * @param CountingHttpClient|null $requests     The sources' transport, counting real requests
+     *                                              for `requests_per_run` (null: every step counts
+     *                                              as one request).
      */
     public function __construct(
         private readonly Settings $settings,
@@ -74,7 +80,8 @@ final class RefreshScheduler implements HookableInterface
         private readonly StatusRecorder $status,
         private readonly Lock $lock,
         private readonly Deadline $deadline,
-        ?Closure $clock = null
+        ?Closure $clock = null,
+        private readonly ?CountingHttpClient $requests = null
     ) {
         $this->clock = $clock ?? static fn (): DateTimeImmutable => new DateTimeImmutable();
     }
@@ -94,12 +101,25 @@ final class RefreshScheduler implements HookableInterface
      */
     public static function queueManualRun(): bool
     {
-        $queued = wp_next_scheduled(CronSchedule::HOOK, ['manual']) === false
-            && wp_schedule_single_event(time(), CronSchedule::HOOK, ['manual']) === true;
+        $queued = self::scheduleManualRun();
 
         spawn_cron();
 
         return $queued;
+    }
+
+    /**
+     * Queue a manual run without nudging WP-Cron; WordPress starts it on the next page load.
+     *
+     * For code that runs inside another request flow (settings save, activation): `spawn_cron()`
+     * would redirect that request when ALTERNATE_WP_CRON is on.
+     *
+     * @return bool Whether a new run was queued (false when one is already waiting).
+     */
+    public static function scheduleManualRun(): bool
+    {
+        return wp_next_scheduled(CronSchedule::HOOK, ['manual']) === false
+            && wp_schedule_single_event(time(), CronSchedule::HOOK, ['manual']) === true;
     }
 
     /**
@@ -137,25 +157,38 @@ final class RefreshScheduler implements HookableInterface
              */
             do_action('odds_comparison/before_refresh', $sourceId);
 
-            $budget   = $this->settings->requestsPerRun();
-            $slowest  = 0.0;
-            $requests = $this->robots->checkIfDue($sourceId, $this->settings->enabledCompetitions()) ? 1 : 0;
+            $budget  = $this->settings->requestsPerRun();
+            $slowest = 0.0;
+            $steps   = 0;
+            $before  = $this->requests?->count() ?? 0;
+            // Real HTTP requests when counted; otherwise one per step (and the robots.txt check).
+            $used    = function () use (&$steps, $before): int {
+                return $this->requests !== null ? $this->requests->count() - $before : $steps;
+            };
+
+            if ($this->robots->checkIfDue($sourceId, $this->settings->enabledCompetitions())) {
+                ++$steps;
+            }
 
             foreach ($this->competitions->only($this->settings->enabledCompetitions()) as $competition) {
                 $covered = $competition->sourcePath($sourceId) !== null;
 
-                if (!$covered || !$this->competitionDue($sourceId, $competition->slug)) {
+                if (
+                    !$covered
+                    || !$this->robots->allows($sourceId, $competition)
+                    || !$this->competitionDue($sourceId, $competition->slug)
+                ) {
                     continue;
                 }
 
-                if ($requests >= $budget || !$this->deadline->allows($slowest)) {
+                if ($used() >= $budget || !$this->deadline->allows($slowest)) {
                     break;
                 }
 
                 $stepStart = $this->deadline->elapsed();
                 $count     = $this->refresher->discover($sourceId, $competition);
                 $slowest   = max($slowest, $this->deadline->elapsed() - $stepStart);
-                ++$requests;
+                ++$steps;
 
                 if ($count !== null) {
                     $summary['discovered'] += $count;
@@ -166,7 +199,11 @@ final class RefreshScheduler implements HookableInterface
             $this->events->prune(($this->clock)());
 
             foreach ($this->duePairs($sourceId) as $pair) {
-                if ($requests >= $budget || !$this->deadline->allows($slowest)) {
+                if (
+                    $used() >= $budget
+                    || !$this->deadline->allows($slowest)
+                    || !$this->robotsAllow($sourceId, $pair)
+                ) {
                     ++$summary['skipped'];
                     continue;
                 }
@@ -174,7 +211,7 @@ final class RefreshScheduler implements HookableInterface
                 $stepStart = $this->deadline->elapsed();
                 $result    = $this->refresher->refreshPair($pair['eventId'], $pair['marketKey']);
                 $slowest   = max($slowest, $this->deadline->elapsed() - $stepStart);
-                ++$requests;
+                ++$steps;
                 ++$summary[$result];
             }
         } finally {
@@ -196,6 +233,21 @@ final class RefreshScheduler implements HookableInterface
         do_action('odds_comparison/after_refresh', $summary);
 
         return $summary;
+    }
+
+    /**
+     * Whether robots.txt allows the page that prices a pair.
+     *
+     * @param string                                   $sourceId Source id.
+     * @param array{eventId: string, marketKey: string} $pair     Pair.
+     * @return bool
+     */
+    private function robotsAllow(string $sourceId, array $pair): bool
+    {
+        $event       = $this->events->get($pair['eventId']);
+        $competition = $event === null ? null : $this->competitions->get($event->competition);
+
+        return $competition === null || $this->robots->allows($sourceId, $competition, $pair['marketKey']);
     }
 
     /**
@@ -225,7 +277,7 @@ final class RefreshScheduler implements HookableInterface
 
             $odds = $this->repository->get($pair['eventId'], $pair['marketKey']);
 
-            if ($odds === null || $now->getTimestamp() - $odds->fetchedAt->getTimestamp() >= $maxAge) {
+            if ($odds === null || $this->isDue($now->getTimestamp() - $odds->fetchedAt->getTimestamp(), $maxAge)) {
                 $due[] = [$event, ['eventId' => $pair['eventId'], 'marketKey' => $pair['marketKey']]];
             }
         }
@@ -251,7 +303,24 @@ final class RefreshScheduler implements HookableInterface
 
         $last = $this->status->source($sourceId)['fetchedAt'][$competition] ?? 0;
 
-        return time() - $last >= $this->maxAgeSeconds($sourceId);
+        return $this->isDue(time() - $last, $this->maxAgeSeconds($sourceId));
+    }
+
+    /**
+     * Whether data of this age should be fetched in the current run.
+     *
+     * Runs come every refresh interval, and data fetched a few seconds into one run is a few
+     * seconds younger than the interval when the next run starts (sooner still when WP-Cron ran
+     * late). Comparing the age with the bare interval would skip every other run. Half a run
+     * interval of slack makes data that would expire before the next run due now.
+     *
+     * @param int $age    Age in seconds.
+     * @param int $maxAge Age at which data is re-fetched, in seconds.
+     * @return bool
+     */
+    private function isDue(int $age, int $maxAge): bool
+    {
+        return $age >= $maxAge - intdiv($this->settings->refreshInterval() * 60, 2);
     }
 
     /**
@@ -262,11 +331,7 @@ final class RefreshScheduler implements HookableInterface
      */
     private function maxAgeSeconds(string $sourceId): int
     {
-        $minutes = $sourceId === TheOddsApiSource::ID
-            ? $this->settings->apiRefreshInterval()
-            : $this->settings->cacheTtl()['refresh_interval'];
-
-        return max(1, $minutes) * 60;
+        return max(1, $this->settings->refreshAgeFor($sourceId)) * 60;
     }
 
     /**

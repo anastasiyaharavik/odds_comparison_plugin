@@ -10,8 +10,10 @@ declare(strict_types=1);
 
 namespace OddsComparison\Storage;
 
+use Closure;
 use OddsComparison\Contracts\HookableInterface;
 use OddsComparison\Support\OptionKeys;
+use OddsComparison\Support\OptionMutex;
 use WP_Post;
 
 defined('ABSPATH') || exit;
@@ -91,12 +93,15 @@ final class TrackedEventsIndex implements HookableInterface
      */
     public function trackPreview(string $eventId, string $marketKey): void
     {
-        $all             = $this->all();
-        $key             = $eventId . '|' . $marketKey;
-        $all[$key]     ??= self::emptyPair($eventId, $marketKey);
-        $all[$key]['previewUntil'] = time() + self::PREVIEW_SECONDS;
+        $until = time() + self::PREVIEW_SECONDS;
 
-        $this->store($all);
+        $this->modify(static function (array $all) use ($eventId, $marketKey, $until): array {
+            $key                       = $eventId . '|' . $marketKey;
+            $all[$key]               ??= self::emptyPair($eventId, $marketKey);
+            $all[$key]['previewUntil'] = $until;
+
+            return $all;
+        });
     }
 
     /**
@@ -192,32 +197,24 @@ final class TrackedEventsIndex implements HookableInterface
      */
     private function setPostPairs(int $postId, array $pairs): void
     {
-        $all     = $this->all();
-        $before  = $all;
-        $wanted  = [];
+        $wanted = [];
 
         foreach ($pairs as [$eventId, $marketKey]) {
             $wanted[$eventId . '|' . $marketKey] = [$eventId, $marketKey];
         }
 
-        foreach ($all as $key => $pair) {
-            $all[$key]['postIds'] = array_values(array_diff($pair['postIds'], [$postId]));
-        }
+        $this->modify(static function (array $all) use ($postId, $wanted): array {
+            foreach ($all as $key => $pair) {
+                $all[$key]['postIds'] = array_values(array_diff($pair['postIds'], [$postId]));
+            }
 
-        foreach ($wanted as $key => [$eventId, $marketKey]) {
-            $all[$key]            ??= self::emptyPair($eventId, $marketKey);
-            $all[$key]['postIds'][] = $postId;
-        }
+            foreach ($wanted as $key => [$eventId, $marketKey]) {
+                $all[$key]            ??= self::emptyPair($eventId, $marketKey);
+                $all[$key]['postIds'][] = $postId;
+            }
 
-        $now = time();
-        $all = array_filter(
-            $all,
-            static fn (array $pair): bool => $pair['postIds'] !== [] || $pair['previewUntil'] > $now
-        );
-
-        if ($all !== $before) {
-            $this->store($all);
-        }
+            return $all;
+        });
     }
 
     /**
@@ -227,8 +224,18 @@ final class TrackedEventsIndex implements HookableInterface
      */
     private function all(): array
     {
-        $stored = get_option(OptionKeys::TRACKED, []);
-        $pairs  = [];
+        return self::parse(get_option(OptionKeys::TRACKED, []));
+    }
+
+    /**
+     * Valid pairs out of a stored value.
+     *
+     * @param mixed $stored Stored option value.
+     * @return array<string, Pair>
+     */
+    private static function parse(mixed $stored): array
+    {
+        $pairs = [];
 
         foreach (is_array($stored) ? $stored : [] as $key => $pair) {
             $valid = is_string($key) && is_array($pair)
@@ -260,17 +267,21 @@ final class TrackedEventsIndex implements HookableInterface
     }
 
     /**
-     * Persist pairs. Pairs no post uses and whose preview has expired are dropped, so the option
-     * holds only live references and does not grow with every event ever previewed.
+     * Change the pairs under the option's lock, starting from what other requests stored. Pairs
+     * no post uses and whose preview has expired are dropped, so the option holds only live
+     * references and does not grow with every event ever previewed.
      *
-     * @param array<string, Pair> $pairs Pairs by key.
+     * @param Closure(array<string, Pair>): array<string, Pair> $change Change.
      * @return void
      */
-    private function store(array $pairs): void
+    private function modify(Closure $change): void
     {
         $now  = time();
         $live = static fn (array $pair): bool => $pair['postIds'] !== [] || $pair['previewUntil'] > $now;
 
-        update_option(OptionKeys::TRACKED, array_filter($pairs, $live), false);
+        OptionMutex::update(
+            OptionKeys::TRACKED,
+            static fn (mixed $stored): array => array_filter($change(self::parse($stored)), $live)
+        );
     }
 }

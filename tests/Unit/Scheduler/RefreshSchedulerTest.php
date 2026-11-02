@@ -11,11 +11,15 @@ declare(strict_types=1);
 namespace OddsComparison\Tests\Unit\Scheduler;
 
 use DateTimeImmutable;
+use OddsComparison\Contracts\HttpClientInterface;
 use OddsComparison\Contracts\SourceInterface;
 use OddsComparison\Domain\Competition;
 use OddsComparison\Domain\Event;
 use OddsComparison\Domain\Market;
 use OddsComparison\Domain\MarketOdds;
+use OddsComparison\Http\CountingHttpClient;
+use OddsComparison\Http\HttpException;
+use OddsComparison\Http\HttpResponse;
 use OddsComparison\Http\RecordedHttpClient;
 use OddsComparison\Http\TimeBudgetExceeded;
 use OddsComparison\Odds\OddsConverter;
@@ -136,7 +140,7 @@ final class RefreshSchedulerTest extends TestCase
         ));
     }
 
-    private function scheduler(int $requestsPerRun, ?Deadline $deadline = null): array
+    private function scheduler(int $requestsPerRun, ?Deadline $deadline = null, bool $counted = false): array
     {
         if (!is_file(self::ROOT . 'fixtures/bettingodds/manifest.json')) {
             self::markTestSkipped('No recorded BettingOdds responses.');
@@ -150,7 +154,8 @@ final class RefreshSchedulerTest extends TestCase
         ]);
 
         $clock        = static fn (): DateTimeImmutable => new DateTimeImmutable(self::CAPTURED);
-        $http         = new RecordedHttpClient(self::ROOT . 'fixtures');
+        $recorded     = new RecordedHttpClient(self::ROOT . 'fixtures');
+        $http         = $counted ? new CountingHttpClient($recorded) : $recorded;
         $bookmakers   = new BookmakerRegistry(self::ROOT . 'config/bookmakers.php');
         $competitions = new CompetitionRegistry(self::ROOT . 'config/competitions.php');
         $sources      = new SourceFactory(
@@ -186,10 +191,11 @@ final class RefreshSchedulerTest extends TestCase
             $status,
             new Lock(),
             $deadline ?? new Deadline(),
-            $clock
+            $clock,
+            $http instanceof CountingHttpClient ? $http : null
         );
 
-        return [$scheduler, $tracked, $events, $repository, $status];
+        return [$scheduler, $tracked, $events, $repository, $status, $http];
     }
 
     public function testRunRespectsTheRequestBudgetAndKickOffOrder(): void
@@ -203,7 +209,7 @@ final class RefreshSchedulerTest extends TestCase
         self::assertTrue($status->source('bettingodds')['robots']['allowed']);
 
         $later = null;
-        foreach ($events->search('bettingodds') as $event) {
+        foreach ($events->search('bettingodds', '', 50, new DateTimeImmutable(self::CAPTURED)) as $event) {
             $afterChelsea = $event->startsAt > $events->get(self::CHELSEA)?->startsAt;
 
             if (!$event->isOutright() && $event->id !== self::CHELSEA && $afterChelsea) {
@@ -273,7 +279,7 @@ final class RefreshSchedulerTest extends TestCase
         $scheduler->run();
 
         $pairs = [];
-        foreach ($events->search('bettingodds') as $event) {
+        foreach ($events->search('bettingodds', '', 50, new DateTimeImmutable(self::CAPTURED)) as $event) {
             if (!$event->isOutright() && count($pairs) < 3) {
                 $pairs[] = $event->id;
                 $tracked->trackPreview($event->id, 'match-result');
@@ -352,5 +358,286 @@ final class RefreshSchedulerTest extends TestCase
         self::assertNotNull($events->get($event->id), 'the event index is unchanged');
         self::assertSame(0, $failures);
         self::assertSame([], $logger->entries());
+    }
+
+    public function testRobotsDisallowedPathsAreNeverRequested(): void
+    {
+        [$scheduler, $tracked, $events, $repository, $status] = $this->scheduler(20);
+        $scheduler->run();
+        $tracked->trackPreview(self::CHELSEA, 'match-result');
+        $tracked->trackPreview('bettingodds:premier-league/outrights', 'outright-winner');
+
+        // Today's check found the listing (discovery and match prices) and the winner page disallowed.
+        $status->recordRobots('bettingodds', false, 'Disallowed', [
+            '/football/premier-league',
+            '/football/premier-league/winner',
+        ]);
+        $competition = (new CompetitionRegistry(self::ROOT . 'config/competitions.php'))->get('premier-league');
+        $robots      = new RobotsMonitor(
+            new RecordedHttpClient(self::ROOT . 'fixtures'),
+            new SourceFactory(),
+            new CompetitionRegistry(self::ROOT . 'config/competitions.php'),
+            $status
+        );
+        self::assertNotNull($competition);
+        self::assertFalse($robots->allows('bettingodds', $competition));
+        self::assertFalse($robots->allows('bettingodds', $competition, 'match-result'), 'priced from the listing');
+        self::assertFalse($robots->allows('bettingodds', $competition, 'outright-winner'));
+        self::assertTrue($robots->allows('bettingodds', $competition, 'top-goalscorer'));
+
+        $run = $scheduler->run();
+
+        self::assertSame([0, 0, 2], [$run['discovered'], $run['fetched'], $run['skipped']]);
+        self::assertNull($repository->get(self::CHELSEA, 'match-result'));
+        self::assertNotNull($events->get(self::CHELSEA), 'stored events are kept');
+    }
+
+    public function testFailedRobotsCheckKeepsEnforcingTheLastResult(): void
+    {
+        $status = new StatusRecorder();
+        $status->recordRobots('bettingodds', false, 'Disallowed', ['/football/premier-league']);
+        $status->recordRobots('bettingodds', true, 'stale', ['/football/premier-league']);
+        $stored = &$GLOBALS['odds_comparison_test_options'][OptionKeys::STATUS];
+        $stored['sources']['bettingodds']['robots']['checkedAt'] = 0;
+        unset($stored);
+
+        $failing = new class implements \OddsComparison\Contracts\HttpClientInterface {
+            public function get(string $url): \OddsComparison\Http\HttpResponse
+            {
+                throw new \OddsComparison\Http\HttpException('timed out', 0);
+            }
+        };
+        $source  = new class implements SourceInterface {
+            public function id(): string
+            {
+                return 'bettingodds';
+            }
+
+            public function baseUrl(): string
+            {
+                return 'https://www.bettingodds.com';
+            }
+
+            public function discoverEvents(Competition $competition): array
+            {
+                return [];
+            }
+
+            public function fetchMarket(Event $event, Market $market): MarketOdds
+            {
+                throw new \RuntimeException('unused');
+            }
+        };
+        $sources = new SourceFactory(['bettingodds' => static fn (): SourceInterface => $source]);
+        $competitions = new CompetitionRegistry(self::ROOT . 'config/competitions.php');
+        $robots       = new RobotsMonitor($failing, $sources, $competitions, $status);
+
+        self::assertTrue($robots->checkIfDue('bettingodds', ['premier-league']));
+        self::assertNull($status->source('bettingodds')['robots']['allowed']);
+        self::assertSame(['/football/premier-league'], $status->source('bettingodds')['robots']['disallowed']);
+        $competition = $competitions->get('premier-league');
+        self::assertNotNull($competition);
+        self::assertFalse($robots->allows('bettingodds', $competition));
+    }
+
+    public function testEmptyListingKeepsStoredMatchesAndReportsAFailure(): void
+    {
+        $now      = new DateTimeImmutable(self::CAPTURED);
+        $match    = Event::match(
+            'flaky',
+            'premier-league/m1',
+            'premier-league',
+            'A vs B',
+            'A',
+            'B',
+            $now->modify('+1 day'),
+            '/a-b'
+        );
+        $outs     = Event::outrights('flaky', 'premier-league', 'PL Outrights', '/pl');
+        $response = [];
+        $source   = new class ($response) implements SourceInterface {
+            /** @param list<Event> $events */
+            public function __construct(public array $events)
+            {
+            }
+
+            public function id(): string
+            {
+                return 'flaky';
+            }
+
+            public function baseUrl(): string
+            {
+                return 'https://flaky.example';
+            }
+
+            public function discoverEvents(Competition $competition): array
+            {
+                return $this->events;
+            }
+
+            public function fetchMarket(Event $event, Market $market): MarketOdds
+            {
+                throw new \RuntimeException('unused');
+            }
+        };
+        $events = new EventIndex();
+        $events->replace('flaky', 'premier-league', [$match, $outs], $now);
+
+        $refresher = new OddsRefresher(
+            new SourceFactory(['flaky' => static fn (): SourceInterface => $source]),
+            $events,
+            new MarketRegistry(self::ROOT . 'config/markets.php'),
+            new OddsRepository(static fn (): int => 60),
+            new TrackedEventsIndex(),
+            new Logger(),
+            static fn (): DateTimeImmutable => $now
+        );
+        $failures = [];
+        $onFailure = static function (string $id, WP_Error $error) use (&$failures): void {
+            $failures[] = $error->get_error_message();
+        };
+        add_action('odds_comparison/source_failed', $onFailure, 10, 2);
+        $competition = (new CompetitionRegistry(self::ROOT . 'config/competitions.php'))->get('premier-league');
+        self::assertNotNull($competition);
+
+        // A blank page parsed into no matches (only the outrights event, or nothing at all).
+        foreach ([[], [$outs]] as $listing) {
+            $source->events = $listing;
+            self::assertNull($refresher->discover('flaky', $competition));
+            self::assertNotNull((new EventIndex())->get($match->id), 'stored match kept');
+        }
+
+        self::assertCount(2, $failures);
+        self::assertStringContainsString('returned no matches although 1 upcoming match(es) are stored', $failures[0]);
+
+        // After the stored match has started, an empty listing is accepted.
+        $later = new OddsRefresher(
+            new SourceFactory(['flaky' => static fn (): SourceInterface => $source]),
+            $events,
+            new MarketRegistry(self::ROOT . 'config/markets.php'),
+            new OddsRepository(static fn (): int => 60),
+            new TrackedEventsIndex(),
+            new Logger(),
+            static fn (): DateTimeImmutable => $now->modify('+2 days')
+        );
+        self::assertSame(1, $later->discover('flaky', $competition));
+        self::assertCount(2, $failures);
+    }
+
+    public function testBudgetCountsRealRequestsNotSteps(): void
+    {
+        [$scheduler, $tracked, $events, , , $http] = $this->scheduler(2, null, true);
+        self::assertInstanceOf(CountingHttpClient::class, $http);
+        $scheduler->run(); // robots.txt + listing
+        self::assertSame(2, $http->count());
+
+        $later = null;
+        foreach ($events->search('bettingodds', '', 50, new DateTimeImmutable(self::CAPTURED)) as $event) {
+            if (!$event->isOutright() && $event->id !== self::CHELSEA) {
+                $later = $event;
+                break;
+            }
+        }
+        self::assertNotNull($later);
+        $tracked->trackPreview(self::CHELSEA, 'match-result');
+        $tracked->trackPreview($later->id, 'match-result');
+        $tracked->trackPreview('bettingodds:premier-league/outrights', 'outright-winner');
+
+        // Budget 2: the listing (both match prices come from it) + the outright page. Counting
+        // steps would have stopped after two of the four steps.
+        $run = $scheduler->run();
+
+        self::assertSame([3, 0, 0], [$run['fetched'], $run['failed'], $run['skipped']]);
+        // This test reuses one source instance, so the listing is still memoized from the first
+        // run (cron runs are separate PHP requests); only the outright page was requested.
+        self::assertSame(3, $http->count());
+    }
+
+    public function testDataFetchedDuringARunIsDueAtTheNextRun(): void
+    {
+        [$scheduler, $tracked, , $repository] = $this->scheduler(20);
+        $scheduler->run();
+        $tracked->trackPreview(self::CHELSEA, 'match-result');
+        $interval = (new Settings())->refreshInterval() * 60;
+        $captured = (new DateTimeImmutable(self::CAPTURED))->getTimestamp();
+
+        // Fetched 20 s into the previous run, so a little younger than one interval now.
+        $repository->save(new MarketOdds(
+            self::CHELSEA,
+            'match-result',
+            'bettingodds',
+            new DateTimeImmutable('@' . ($captured - $interval + 20)),
+            ['home' => ['label' => 'Chelsea', 'prices' => ['betfred' => new \OddsComparison\Domain\Price(2.5)]]]
+        ));
+        self::assertSame([self::CHELSEA], array_column($scheduler->duePairs('bettingodds'), 'eventId'));
+
+        // Fetched in this run: not due again.
+        $repository->save(new MarketOdds(
+            self::CHELSEA,
+            'match-result',
+            'bettingodds',
+            new DateTimeImmutable('@' . ($captured - 60)),
+            ['home' => ['label' => 'Chelsea', 'prices' => ['betfred' => new \OddsComparison\Domain\Price(2.5)]]]
+        ));
+        self::assertSame([], $scheduler->duePairs('bettingodds'));
+    }
+
+    public function testRobotsCheckNeverAbortsTheRun(): void
+    {
+        $competitions = new CompetitionRegistry(self::ROOT . 'config/competitions.php');
+        $source       = new class implements SourceInterface {
+            public function id(): string
+            {
+                return 'bettingodds';
+            }
+
+            public function baseUrl(): string
+            {
+                return 'https://www.bettingodds.com';
+            }
+
+            public function discoverEvents(Competition $competition): array
+            {
+                return [];
+            }
+
+            public function fetchMarket(Event $event, Market $market): MarketOdds
+            {
+                throw new \RuntimeException('unused');
+            }
+        };
+        $sources  = new SourceFactory(['bettingodds' => static fn (): SourceInterface => $source]);
+        $throwing = static fn (\Throwable $error): HttpClientInterface => self::throwingClient($error);
+
+        // Out of time before the request: no check recorded, tried again next run.
+        $status = new StatusRecorder();
+        $robots = new RobotsMonitor($throwing(new TimeBudgetExceeded('late')), $sources, $competitions, $status);
+        self::assertFalse($robots->checkIfDue('bettingodds', ['premier-league']));
+        self::assertSame(0, $status->source('bettingodds')['robots']['checkedAt']);
+
+        // Unknown source id.
+        self::assertFalse((new RobotsMonitor($throwing(new HttpException('x')), $sources, $competitions, $status))
+            ->checkIfDue('nosuchsource', ['premier-league']));
+
+        // Any other runtime failure is recorded, not thrown.
+        $robots = new RobotsMonitor($throwing(new \RuntimeException('boom')), $sources, $competitions, $status);
+        self::assertTrue($robots->checkIfDue('bettingodds', ['premier-league']));
+        self::assertNull($status->source('bettingodds')['robots']['allowed']);
+        self::assertSame('boom', $status->source('bettingodds')['robots']['detail']);
+    }
+
+    private static function throwingClient(\Throwable $error): HttpClientInterface
+    {
+        return new class ($error) implements HttpClientInterface {
+            public function __construct(private readonly \Throwable $error)
+            {
+            }
+
+            public function get(string $url): HttpResponse
+            {
+                throw $this->error;
+            }
+        };
     }
 }

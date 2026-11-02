@@ -100,7 +100,7 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
      * @param BookmakerRegistry   $bookmakers   Bookmaker registry (code mapping).
      * @param CompetitionRegistry $competitions Competition registry (paths).
      * @param OddsValidator       $validator    Data-accuracy checks.
-     * @param Closure|null        $clock        fn(): DateTimeImmutable; "now" (capture time in Recorded mode).
+     * @param Closure|null        $clock        fn(): DateTimeImmutable; "now" (in Demo mode: the capture time).
      */
     public function __construct(
         protected readonly HttpClientInterface $http,
@@ -136,7 +136,7 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
     {
         if ($event->sourceId !== $this->id()) {
             throw new InvalidArgumentException(
-                sprintf('Event %s does not belong to source %s.', esc_html($event->id), esc_html($this->id()))
+                sprintf('Event %s does not belong to source %s.', $event->id, $this->id())
             );
         }
 
@@ -147,9 +147,9 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
             throw new RuntimeException(
                 sprintf(
                     '%s does not offer market %s for %s.',
-                    esc_html($this->id()),
-                    esc_html($market->key),
-                    esc_html($event->id)
+                    $this->id(),
+                    $market->key,
+                    $event->id
                 )
             );
         }
@@ -163,9 +163,9 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
             throw new RuntimeException(
                 sprintf(
                     'Odds for %s / %s rejected: %s.',
-                    esc_html($event->id),
-                    esc_html($market->key),
-                    esc_html((string) $result->rejection)
+                    $event->id,
+                    $market->key,
+                    (string) $result->rejection
                 )
             );
         }
@@ -282,7 +282,7 @@ abstract class AbstractSource implements SourceInterface, DiagnosticsInterface
     }
 
     /**
-     * Current time (UTC), injectable for Recorded mode and tests.
+     * Current time (UTC); the capture time for recorded responses (Demo mode) and in tests.
      *
      * @return DateTimeImmutable
      */

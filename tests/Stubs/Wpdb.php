@@ -23,6 +23,17 @@ final class Wpdb
 {
     public string $options = 'wp_options';
 
+    public function esc_like(string $text): string // phpcs:ignore PSR1.Methods.CamelCapsMethodName
+    {
+        return addcslashes($text, '_%\\');
+    }
+
+    /** @var array<string, true> MySQL named locks held (GET_LOCK / RELEASE_LOCK). */
+    public array $namedLocks = [];
+
+    /** Number of GET_LOCK calls. */
+    public int $lockCalls = 0;
+
     public function prepare(string $query, mixed ...$args): string
     {
         return (string) json_encode([$query, $args]);
@@ -57,6 +68,29 @@ final class Wpdb
             return 1;
         }
 
+        if (str_starts_with($query, 'SELECT RELEASE_LOCK')) {
+            $released = isset($this->namedLocks[$args[0]]);
+            unset($this->namedLocks[$args[0]]);
+
+            return $released ? 1 : 0;
+        }
+
+        if (str_starts_with($query, 'DELETE') && str_contains($query, 'LIKE')) {
+            $deleted = 0;
+
+            foreach (array_keys($options) as $name) {
+                foreach ($args as $pattern) {
+                    if (str_starts_with((string) $name, rtrim(stripslashes($pattern), '%'))) {
+                        unset($options[$name]);
+                        ++$deleted;
+                        break;
+                    }
+                }
+            }
+
+            return $deleted;
+        }
+
         if (str_starts_with($query, 'DELETE')) {
             [$name, $expected] = $args;
 
@@ -74,8 +108,16 @@ final class Wpdb
 
     public function get_var(string $prepared): ?string // phpcs:ignore PSR1.Methods.CamelCapsMethodName
     {
-        [, $args] = json_decode($prepared, true);
-        $value    = $GLOBALS['odds_comparison_test_options'][$args[0]] ?? null;
+        [$query, $args] = json_decode($prepared, true);
+
+        if (str_starts_with($query, 'SELECT GET_LOCK')) {
+            ++$this->lockCalls;
+            $this->namedLocks[$args[0]] = true;
+
+            return '1';
+        }
+
+        $value = $GLOBALS['odds_comparison_test_options'][$args[0]] ?? null;
 
         return $value === null ? null : (string) $value;
     }

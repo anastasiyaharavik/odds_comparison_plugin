@@ -185,22 +185,39 @@ final class StorageAndRefreshTest extends TestCase
         $index->replace('bettingodds', 'premier-league', [$later, $outs, $soon, $started], $now);
         $index->replace('theoddsapi', 'premier-league', [$other], $now);
 
-        self::assertNull($index->get($started->id), 'started matches are not indexed');
+        self::assertNotNull($index->get($started->id), 'a started match is kept, so blocks can say it started');
         self::assertSame(
             [$soon->id, $later->id, $outs->id],
-            array_map(static fn (Event $e): string => $e->id, $index->search('bettingodds')),
-            'soonest first, outrights last, other sources excluded'
+            array_map(static fn (Event $e): string => $e->id, $index->search('bettingodds', '', 50, $now)),
+            'soonest first, outrights last, started and other sources excluded'
         );
-        $found = $index->search('bettingodds', 'chel');
+        $found = $index->search('bettingodds', 'chel', 50, $now);
         self::assertSame([$soon->id], array_map(static fn (Event $e): string => $e->id, $found));
+        self::assertSame(
+            [$soon->id],
+            array_map(static fn (Event $e): string => $e->id, $index->search('bettingodds', '', 1, $now)),
+            'started matches never take a place within the limit'
+        );
+        self::assertSame(2, $index->upcomingMatchCount('bettingodds', 'premier-league', $now));
 
-        // Rediscovery replaces only that slice.
+        // Rediscovery replaces only that slice; the started match stays even when no longer listed.
         $index->replace('bettingodds', 'premier-league', [$soon, $outs], $now);
         self::assertNull((new EventIndex())->get($later->id));
+        self::assertNotNull((new EventIndex())->get($started->id));
         self::assertNotNull((new EventIndex())->get($other->id));
 
-        // Two days on, both next-day matches (one per source) have started; outrights stay.
-        self::assertSame(2, $index->prune($now->modify('+2 days')));
+        // Two days on, the next-day matches have started too: all kept, none upcoming.
+        self::assertSame(0, $index->prune($now->modify('+2 days')));
+        self::assertSame([$outs->id], array_map(
+            static fn (Event $e): string => $e->id,
+            $index->search('bettingodds', '', 50, $now->modify('+2 days'))
+        ));
+
+        // A week after kick-off, started matches are dropped; outrights stay.
+        $weekLater = $now->modify('+1 day')
+            ->modify('+' . EventIndex::STARTED_RETENTION . ' seconds')
+            ->modify('+1 minute');
+        self::assertSame(3, $index->prune($weekLater));
         self::assertSame([$outs->id], array_keys((new EventIndex())->all()));
     }
 
@@ -319,7 +336,35 @@ final class StorageAndRefreshTest extends TestCase
 
         $refresher->refreshPair($chelsea, 'match-result');
         $refresher->reportDiagnostics('bettingodds');
-        self::assertGreaterThan(count($entries), count((new Logger())->entries()));
+        $after = (new Logger())->entries();
+        // The reminder repeats the newest entry, so it is counted instead of added.
+        self::assertCount(count($entries), $after);
+        self::assertSame(2, $after[0]['count']);
+    }
+
+    public function testRepeatedLogEntriesAreCollapsed(): void
+    {
+        $logger = new Logger();
+        $logger->clear();
+
+        foreach (range(1, 9) as $attempt) {
+            $logger->error('bettingodds', 'Requests to www.bettingodds.com are paused (circuit open).');
+        }
+
+        $logger->error('bettingodds', 'Another problem.');
+        $logger->error('bettingodds', 'Requests to www.bettingodds.com are paused (circuit open).');
+
+        $entries = $logger->entries();
+        self::assertSame(
+            [['Requests to www.bettingodds.com are paused (circuit open).', 1], ['Another problem.', 1], [
+                'Requests to www.bettingodds.com are paused (circuit open).',
+                9,
+            ]],
+            array_map(static fn (array $entry): array => [$entry['message'], $entry['count']], $entries),
+            'nine repeats are one entry; a repeat after another message starts a new one'
+        );
+        self::assertGreaterThan(0, $GLOBALS['wpdb']->lockCalls, 'written under the option lock');
+        self::assertSame([], $GLOBALS['wpdb']->namedLocks, 'lock released');
     }
 
     public function testDiagnosticsOfUnknownSourceAreIgnored(): void

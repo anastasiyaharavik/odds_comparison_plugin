@@ -1,6 +1,6 @@
 /**
  * README screenshots. Skipped in normal runs; `npm run docs:screenshots` saves
- * them to docs/screenshots/. Global setup puts the site in Recorded mode, so every price is
+ * them to docs/screenshots/. Global setup puts the site in Demo mode, so every price is
  * from real captured pages.
  */
 const { test, expect } = require( '@wordpress/e2e-test-utils-playwright' );

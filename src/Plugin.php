@@ -10,7 +10,6 @@ declare(strict_types=1);
 
 namespace OddsComparison;
 
-use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
 use LogicException;
@@ -19,11 +18,13 @@ use OddsComparison\Admin\SettingsPage;
 use OddsComparison\Admin\SourceProbe;
 use OddsComparison\Admin\StatusPage;
 use OddsComparison\Block\BlockRegistrar;
+use OddsComparison\Block\PreviewContext;
 use OddsComparison\Block\TableRenderer;
 use OddsComparison\Contracts\HookableInterface;
 use OddsComparison\Contracts\HttpClientInterface;
 use OddsComparison\Contracts\SourceInterface;
 use OddsComparison\Http\CircuitBreaker;
+use OddsComparison\Http\CountingHttpClient;
 use OddsComparison\Http\RateLimiter;
 use OddsComparison\Http\RecordedHttpClient;
 use OddsComparison\Http\WpHttpClient;
@@ -34,6 +35,7 @@ use OddsComparison\Registry\BookmakerRegistry;
 use OddsComparison\Registry\CompetitionRegistry;
 use OddsComparison\Registry\MarketRegistry;
 use OddsComparison\Scheduler\CronSchedule;
+use OddsComparison\Scheduler\DataModeSwitch;
 use OddsComparison\Rest\EditorController;
 use OddsComparison\Rest\StatusController;
 use OddsComparison\Scheduler\Lock;
@@ -42,6 +44,7 @@ use OddsComparison\Scheduler\RefreshScheduler;
 use OddsComparison\Settings\SettingsEvents;
 use OddsComparison\Settings\Settings;
 use OddsComparison\Source\BettingOdds\BettingOddsSource;
+use OddsComparison\Source\DemoSource;
 use OddsComparison\Source\SourceFactory;
 use OddsComparison\Source\TheOddsApi\TheOddsApiSource;
 use OddsComparison\Storage\EventIndex;
@@ -123,6 +126,9 @@ final class Plugin
     /** Odds table renderer (block render.php). */
     private readonly TableRenderer $tableRenderer;
 
+    /** Whether the block renders for the editor preview. */
+    private readonly PreviewContext $previewContext;
+
     /** Source health and run summaries (Observer). */
     private readonly StatusRecorder $statusRecorder;
 
@@ -158,30 +164,47 @@ final class Plugin
         $openSeconds          = (int) apply_filters('odds_comparison/circuit_breaker_seconds', HOUR_IN_SECONDS);
         $this->circuitBreaker = new CircuitBreaker(3, max(60, $openSeconds));
 
+        $fixturesDir    = dirname($file) . '/fixtures';
         $deadline       = new Deadline();
-        [$http, $clock] = $this->transport(dirname($file) . '/fixtures', $deadline);
+        $clock          = static fn (): DateTimeImmutable => new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $recorded       = $this->settings->dataMode() === 'demo' && is_dir($fixturesDir)
+            ? new RecordedHttpClient($fixturesDir)
+            : null;
+        $http           = new CountingHttpClient($recorded ?? $this->liveTransport($deadline));
+        $capturedAt     = $recorded?->firstCapturedAt() ?? $clock();
+        $sourceClock    = $recorded === null ? $clock : static fn (): DateTimeImmutable => $capturedAt;
         $validator      = new OddsValidator();
-        $apiKey         = self::theOddsApiKey();
+        // Demo requests never leave the site, so The Odds API needs no real key there.
+        $apiKey         = $recorded === null ? self::theOddsApiKey() : 'demo';
+        $demo           = static fn (SourceInterface $source): SourceInterface => $recorded === null
+            ? $source
+            : new DemoSource($source, $capturedAt, $clock);
         $this->sources  = new SourceFactory(
             [
-                BettingOddsSource::ID => BettingOddsSource::class,
-                TheOddsApiSource::ID  => fn (): SourceInterface => new TheOddsApiSource(
+                BettingOddsSource::ID => fn (): SourceInterface => $demo(new BettingOddsSource(
+                    $http,
+                    $this->bookmakers,
+                    $this->competitions,
+                    $validator,
+                    $sourceClock
+                )),
+                TheOddsApiSource::ID  => fn (): SourceInterface => $demo(new TheOddsApiSource(
                     $http,
                     $this->bookmakers,
                     $this->competitions,
                     $validator,
                     $apiKey,
-                    $clock
-                ),
+                    $sourceClock
+                )),
             ],
-            [$http, $this->bookmakers, $this->competitions, $validator, $clock]
+            [$http, $this->bookmakers, $this->competitions, $validator, $sourceClock]
         );
 
         $this->logger     = new Logger();
         $this->events     = new EventIndex();
         $this->tracked    = new TrackedEventsIndex();
         $this->repository = new OddsRepository(
-            fn (): int => $this->settings->cacheTtl()['stale_after'],
+            fn (string $sourceId): int => $this->settings->staleAfterFor($sourceId),
             static fn (): int => $clock()->getTimestamp()
         );
         $this->refresher  = new OddsRefresher(
@@ -207,7 +230,8 @@ final class Plugin
             $this->statusRecorder,
             $lock,
             $deadline,
-            $clock
+            $clock,
+            $http
         );
 
         $statusPage      = new StatusPage(
@@ -222,7 +246,8 @@ final class Plugin
             $lock,
             $this->logger,
             $this->cronSchedule,
-            $this->bookmakers
+            $this->bookmakers,
+            is_dir($fixturesDir)
         );
         $this->tableRenderer = new TableRenderer(
             $this->settings,
@@ -236,8 +261,23 @@ final class Plugin
             $clock
         );
 
+        $settingsPage = new SettingsPage(
+            $this->settings,
+            $this->bookmakers,
+            $this->markets,
+            $this->competitions,
+            $this->sources,
+            new SourceProbe($this->sources, $this->competitions, $this->settings),
+            $statusPage,
+            $file,
+            is_dir($fixturesDir)
+        );
+
+        $this->previewContext = new PreviewContext();
+
         $this->hookables = [
             new BlockRegistrar(dirname($file) . '/build/odds-table'),
+            $this->previewContext,
             new EditorController(
                 $this->settings,
                 $this->events,
@@ -249,21 +289,12 @@ final class Plugin
                 $clock
             ),
             new SettingsEvents(),
+            new DataModeSwitch($this->repository, $this->events, $this->statusRecorder),
             $this->statusRecorder,
             $this->scheduler,
-            new SettingsPage(
-                $this->settings,
-                $this->bookmakers,
-                $this->markets,
-                $this->competitions,
-                $this->sources,
-                new SourceProbe($this->sources, $this->competitions, $this->settings),
-                $statusPage,
-                $file,
-                is_dir(dirname($file) . '/fixtures')
-            ),
+            $settingsPage,
             $statusPage,
-            new AdminActions($this->repository, $this->circuitBreaker, $this->sources),
+            new AdminActions($this->repository, $this->circuitBreaker, $this->sources, $this->settings, $settingsPage),
             new StatusController($statusPage),
         ];
     }
@@ -463,6 +494,16 @@ final class Plugin
     }
 
     /**
+     * Editor preview detection (block render.php).
+     *
+     * @return PreviewContext
+     */
+    public function previewContext(): PreviewContext
+    {
+        return $this->previewContext;
+    }
+
+    /**
      * Cron refresh run.
      *
      * @return RefreshScheduler
@@ -527,35 +568,26 @@ final class Plugin
     }
 
     /**
-     * HTTP transport and clock for the current data mode.
+     * Live transport: WordPress HTTP API with throttling and the circuit breaker.
      *
-     * Live: WordPress HTTP API with throttling and the circuit breaker; "now" is the real time.
-     * Recorded: real captured responses only, and "now" is the capture time so recorded matches
-     * are not treated as started. Recorded mode needs the dev-only fixtures/ folder.
+     * Demo mode uses {@see RecordedHttpClient} instead: real responses recorded from the sources
+     * and shipped in fixtures/, never the network. {@see DemoSource} moves their kick-off dates
+     * into the coming days.
      *
-     * @param string   $fixturesDir Absolute fixtures/ path.
-     * @param Deadline $deadline    Refresh-run deadline for live requests.
-     * @return array{HttpClientInterface, Closure(): DateTimeImmutable}
+     * @param Deadline $deadline Refresh-run deadline for live requests.
+     * @return HttpClientInterface
      */
-    private function transport(string $fixturesDir, Deadline $deadline): array
+    private function liveTransport(Deadline $deadline): HttpClientInterface
     {
-        if ($this->settings->dataMode() === 'recorded' && is_dir($fixturesDir)) {
-            $recorded   = new RecordedHttpClient($fixturesDir);
-            $capturedAt = $recorded->firstCapturedAt() ?? new DateTimeImmutable('now', new DateTimeZone('UTC'));
-
-            return [$recorded, static fn (): DateTimeImmutable => $capturedAt];
-        }
-
         $userAgent = sprintf('OddsComparisonPlugin/%s (+%s)', self::VERSION, home_url('/'));
-        $http      = new WpHttpClient(
+
+        return new WpHttpClient(
             new RateLimiter((float) $this->settings->minRequestInterval()),
             $this->circuitBreaker,
             $userAgent,
             null,
             $deadline
         );
-
-        return [$http, static fn (): DateTimeImmutable => new DateTimeImmutable('now', new DateTimeZone('UTC'))];
     }
 
     /**
